@@ -1,10 +1,14 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { AccountInfo } from '@azure/msal-browser';
+import { MS_CONFIG } from './config';
+import { getFileInfo, initAuth, listDrives, listFolder, login, logout, me, resolveFile, siteFromUrl, type BrowseEntry, type FileRef } from './lib/msGraph';
+import { addToRow, finishInventory, loadShared, removeFromRow, resetInventory, saveMapping } from './lib/sharepointSync';
 import { Scanner } from './Scanner';
 import { parseUdi, normId } from './lib/udi';
 import { parseTargetWorkbook } from './lib/targetList';
-import { reconcile, findTarget, type ReconRow, type Status } from './lib/reconcile';
+import { reconcile, findTarget, type ReconRow, type Reconciliation, type Status } from './lib/reconcile';
 import { buildFilledOriginal, buildReport, canShareFile, downloadFile, printReport, shareFile, type ExportFile } from './lib/exportWeb';
-import { usePersisted } from './lib/storage';
+import { load, usePersisted } from './lib/storage';
 import { itemLabel, type Mappings, type Scan, type TargetItem, type TargetSource } from './lib/types';
 
 const KEYS = {
@@ -14,6 +18,7 @@ const KEYS = {
   original: 'konsi/original/v1',
   mappings: 'konsi/mappings/v1',
   settings: 'konsi/settings/v1',
+  spFile: 'konsi/spfile/v1',
 };
 
 type Draft = Omit<Scan, 'id' | 'scannedAt' | 'quantity'> & { quantity: string };
@@ -55,8 +60,116 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [toast, setToast] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
+  const [account, setAccount] = useState<AccountInfo | null>(null);
+  const [spFile, setSpFile] = usePersisted<FileRef | null>(KEYS.spFile, null);
+  const [lastSync, setLastSync] = useState<Date | null>(null);
+  const [spError, setSpError] = useState('');
+  const [browsing, setBrowsing] = useState(false);
+  const shared = !!(account && spFile);
 
-  const recon = useMemo(() => reconcile(targets, scans, mappings), [targets, scans, mappings]);
+  const localRecon = useMemo(() => reconcile(targets, scans, mappings), [targets, scans, mappings]);
+  // Im SharePoint-Modus zählt der Stand der gemeinsamen Datei (inkl. Scans der Kollegen)
+  const recon: Reconciliation = useMemo(() => {
+    if (!shared) return localRecon;
+    const rows: ReconRow[] = localRecon.rows.map((r) => {
+      const ist = r.item.currentIst ?? 0;
+      return { ...r, foundQty: ist, status: ist >= r.item.expectedQty ? 'vollständig' : ist > 0 ? 'teilweise' : 'fehlend' };
+    });
+    const unknown = scans.filter((x) => x.sync === 'unassigned');
+    const counts = { vollständig: 0, teilweise: 0, fehlend: 0, unbekannt: unknown.length };
+    rows.forEach((r) => counts[r.status]++);
+    return { rows, unknown, counts };
+  }, [shared, localRecon, scans]);
+
+  // --- Microsoft-Anmeldung und SharePoint ---
+  useEffect(() => {
+    initAuth()
+      .then(async (acc) => {
+        setAccount(acc);
+        if (acc && !load('konsi/settings/v1', { userName: '' }).userName) {
+          const m = await me().catch(() => null);
+          if (m?.displayName) setSettings((st) => ({ ...st, userName: m.displayName }));
+        }
+      })
+      .catch((e) => setSpError(`Anmeldung fehlgeschlagen: ${e?.message ?? e}`));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const refreshShared = useCallback(
+    async (file: FileRef | null = spFile, quiet = false) => {
+      if (!file) return;
+      if (!quiet) setBusy('Liste wird aus SharePoint geladen …');
+      try {
+        const st = await loadShared(file);
+        setTargets(st.items);
+        setSource(st.source);
+        setOriginal('');
+        setMappings((m) => ({ ...m, ...st.mappings }));
+        setSettings((x) => ({ ...x, listName: file.name.replace(/\.xlsx$/i, '') }));
+        setLastSync(new Date());
+        setSpError('');
+      } catch (e) {
+        setSpError(`SharePoint: ${e instanceof Error ? e.message : e}`);
+      } finally {
+        if (!quiet) setBusy('');
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [spFile],
+  );
+
+  // Nach der Anmeldung: Datei über den hinterlegten Link finden
+  useEffect(() => {
+    if (!account) return;
+    if (spFile) {
+      refreshShared(spFile);
+      return;
+    }
+    (async () => {
+      setBusy('Gemeinsame Liste wird gesucht …');
+      try {
+        const f = await resolveFile(MS_CONFIG.defaultFileUrl);
+        setSpFile(f);
+        await refreshShared(f);
+      } catch {
+        setBrowsing(true);
+      } finally {
+        setBusy('');
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account]);
+
+  // Alle 60 Sekunden den Stand der Kollegen holen
+  useEffect(() => {
+    if (!shared) return;
+    const t = setInterval(() => {
+      if (document.visibilityState === 'visible' && !scanning && !draft) refreshShared(spFile, true);
+    }, 60_000);
+    return () => clearInterval(t);
+  }, [shared, scanning, draft, spFile, refreshShared]);
+
+  async function pushScan(scan: Scan, target: TargetItem) {
+    if (!spFile || !source || !target.row) return;
+    try {
+      const res = await addToRow(spFile, source, target.row, scan.quantity, scan.batch);
+      setScans((p) => p.map((x) => (x.id === scan.id ? { ...x, sync: 'ok', syncedRow: target.row } : x)));
+      setTargets((p) => p.map((t) => (t.row === target.row ? { ...t, currentIst: res.ist, currentBatch: res.batch } : t)));
+      setLastSync(new Date());
+    } catch (e) {
+      flash('Nicht gesendet, wird später erneut versucht');
+      setSpError(`Eintragen fehlgeschlagen: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  async function retryPending() {
+    const pending = scans.filter((x) => x.sync === 'pending');
+    for (const sc of [...pending].reverse()) {
+      const t = targets.find((x) => x.row === sc.syncedRow) ?? findTarget(targets, sc, mappings);
+      if (t) await pushScan(sc, t);
+    }
+  }
+
   const title = `Konsilager-Inventur${settings.listName ? ` – ${settings.listName}` : ''}`;
 
   const flash = (msg: string) => {
@@ -97,7 +210,19 @@ export default function App() {
     };
     // Zuordnung merken: dieselbe UDI-DI wird künftig automatisch erkannt
     const idKey = normId(scan.udiDi) || normId(scan.productCode);
-    if (scan.targetKey && idKey) setMappings((m) => ({ ...m, [idKey]: scan.targetKey! }));
+    const newMappings = scan.targetKey && idKey ? { ...mappings, [idKey]: scan.targetKey } : mappings;
+    if (newMappings !== mappings) setMappings(newMappings);
+    if (shared) {
+      const target = findTarget(targets, scan, newMappings);
+      if (target?.row) {
+        scan.sync = 'pending';
+        scan.syncedRow = target.row;
+        pushScan(scan, target);
+        if (newMappings !== mappings && spFile && (scan.udiDi || scan.productCode)) {
+          saveMapping(spFile, (scan.udiDi || scan.productCode)!, target).catch((e) => console.warn('Zuordnung nicht geteilt', e));
+        }
+      } else scan.sync = 'unassigned';
+    }
     setScans((prev) => [scan, ...prev]);
     setDraft(null);
     flash('Gespeichert');
@@ -146,8 +271,56 @@ export default function App() {
     }
   }
 
-  function removeScan(id: string) {
-    if (confirm('Diesen Scan löschen?')) setScans((p) => p.filter((e) => e.id !== id));
+  async function removeScan(id: string) {
+    const sc = scans.find((x) => x.id === id);
+    if (!sc) return;
+    const inShared = shared && sc.sync === 'ok' && sc.syncedRow && source;
+    if (!confirm(inShared ? 'Diesen Scan löschen und in der SharePoint-Liste wieder austragen?' : 'Diesen Scan löschen?')) return;
+    if (inShared) {
+      try {
+        const stillUsed = scans.some((x) => x.id !== id && x.sync === 'ok' && x.syncedRow === sc.syncedRow && x.batch === sc.batch);
+        const res = await removeFromRow(spFile!, source!, sc.syncedRow!, sc.quantity, sc.batch, stillUsed);
+        setTargets((p) => p.map((t) => (t.row === sc.syncedRow ? { ...t, currentIst: res.ist, currentBatch: res.batch } : t)));
+      } catch (e) {
+        alert(`Austragen in SharePoint fehlgeschlagen: ${e instanceof Error ? e.message : e}`);
+        return;
+      }
+    }
+    setScans((p) => p.filter((e) => e.id !== id));
+  }
+
+  async function finishShared() {
+    setExportMenu(false);
+    if (!spFile || !source) return;
+    const open = targets.filter((t) => t.currentIst === null || t.currentIst === undefined).length;
+    if (!confirm(`Inventur abschließen?\n\n${open} Artikel ohne Ist-Wert werden auf 0 gesetzt (→ nachbestellen). Inventurdatum und „Geprüft von: ${settings.userName || '–'}“ werden eingetragen.`)) return;
+    setBusy('Wird in SharePoint eingetragen …');
+    try {
+      await finishInventory(spFile, source, targets, settings.userName);
+      await refreshShared(spFile, true);
+      flash('Inventur abgeschlossen');
+    } catch (e) {
+      alert(`Fehlgeschlagen: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function resetShared() {
+    if (!spFile || !source) return;
+    if (!confirm('Neue Inventur starten?\n\nIst und Chargen-Nr. werden in der gemeinsamen SharePoint-Liste für ALLE Artikel geleert. Die Scans auf diesem Gerät werden ebenfalls gelöscht.')) return;
+    setBusy('Liste wird zurückgesetzt …');
+    try {
+      await resetInventory(spFile, source, targets);
+      setScans([]);
+      await refreshShared(spFile, true);
+      setShowSettings(false);
+      flash('Neue Inventur gestartet');
+    } catch (e) {
+      alert(`Fehlgeschlagen: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setBusy('');
+    }
   }
 
   function clear(what: 'scans' | 'targets' | 'mappings') {
@@ -178,14 +351,46 @@ export default function App() {
         <div className="grow">
           <h1>Konsilager</h1>
           <div className="sub">
-            {settings.listName ? `Liste: ${settings.listName}` : 'Keine Soll-Liste importiert'}
+            {shared ? '☁︎ SharePoint: ' : settings.listName ? 'Liste: ' : ''}
+            {settings.listName || 'Keine Soll-Liste importiert'}
             {settings.userName ? ` · ${settings.userName}` : ''}
           </div>
+          {shared && lastSync && <div className="sub small">Stand {lastSync.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}</div>}
         </div>
+        {shared && (
+          <button className="icon" onClick={() => refreshShared()} aria-label="Aktualisieren" title="Aktualisieren">
+            ⟳
+          </button>
+        )}
         <button className="icon" onClick={() => setShowSettings(true)} aria-label="Einstellungen">
           ⚙︎
         </button>
       </header>
+
+      {!account && (
+        <div className="signin">
+          <div className="grow">
+            <b>Gemeinsame Liste in SharePoint</b>
+            <span>Mit dem Firmenkonto anmelden, dann landet jeder Scan sofort in der geteilten Excel-Liste.</span>
+          </div>
+          <button className="btn primary" onClick={() => login().catch((e) => alert(e?.message ?? e))}>
+            Anmelden
+          </button>
+        </div>
+      )}
+      {spError && (
+        <div className="errorbar" onClick={() => setSpError('')}>
+          {spError}
+        </div>
+      )}
+      {shared && scans.some((x) => x.sync === 'pending') && (
+        <div className="errorbar warnbar">
+          {scans.filter((x) => x.sync === 'pending').length} Scan(s) noch nicht in SharePoint eingetragen.
+          <button className="textbtn small" onClick={retryPending}>
+            Erneut senden
+          </button>
+        </div>
+      )}
 
       {targets.length > 0 && (
         <div className="summary">
@@ -212,9 +417,15 @@ export default function App() {
         <button className="btn" onClick={() => setDraft(emptyDraft())}>
           Manuell
         </button>
-        <button className="btn" onClick={() => fileInput.current?.click()}>
-          Soll-Liste
-        </button>
+        {shared ? (
+          <button className="btn" onClick={() => refreshShared()}>
+            Aktualisieren
+          </button>
+        ) : (
+          <button className="btn" onClick={() => fileInput.current?.click()}>
+            Soll-Liste
+          </button>
+        )}
         <button className="btn" onClick={() => (scans.length || targets.length ? setExportMenu(true) : alert('Noch keine Soll-Liste und keine Scans.'))}>
           Export
         </button>
@@ -242,7 +453,7 @@ export default function App() {
               </p>
             )}
             {rows.map((r) => (
-              <ReconItem key={r.item.id} row={r} />
+              <ReconItem key={r.item.id} row={r} shared={shared} />
             ))}
           </>
         )}
@@ -313,8 +524,14 @@ export default function App() {
       {exportMenu && (
         <div className="backdrop" onClick={() => setExportMenu(false)}>
           <div className="sheet" onClick={(e) => e.stopPropagation()}>
-            <h2>Exportieren</h2>
-            {canWriteOriginal && (
+            <h2>{shared ? 'Abschließen & Exportieren' : 'Exportieren'}</h2>
+            {shared && (
+              <button className="menu-item" onClick={finishShared}>
+                <b>Inventur abschließen</b>
+                <span>In der SharePoint-Liste: nicht gefundene Artikel auf 0 (→ nachbestellen), Datum und Prüfer eintragen</span>
+              </button>
+            )}
+            {!shared && canWriteOriginal && (
               <button className="menu-item" onClick={() => runExport('original')}>
                 <b>In Original-Liste eintragen</b>
                 <span>Deine Excel-Datei wie importiert, mit Ist, Chargen-Nr., Datum und Prüfer ausgefüllt</span>
@@ -376,16 +593,53 @@ export default function App() {
             <h2>Einstellungen</h2>
             <Field label="Dein Name (für „Geprüft von“ und bei jedem Scan)" value={settings.userName} onChange={(v) => setSettings((s) => ({ ...s, userName: v }))} caps="words" />
             <Field label="Name der Inventur" value={settings.listName} onChange={(v) => setSettings((s) => ({ ...s, listName: v }))} caps="sentences" />
+            {account && (
+              <div className="settings-block">
+                <p className="meta">
+                  Angemeldet als {account.name ?? account.username}
+                  {spFile ? (
+                    <>
+                      <br />
+                      Liste:{' '}
+                      {spFile.webUrl ? (
+                        <a href={spFile.webUrl} target="_blank" rel="noreferrer">
+                          {spFile.name}
+                        </a>
+                      ) : (
+                        spFile.name
+                      )}
+                    </>
+                  ) : null}
+                </p>
+                <button className="textbtn" onClick={() => setBrowsing(true)}>
+                  Andere SharePoint-Datei wählen
+                </button>
+                {shared && (
+                  <button className="danger" onClick={resetShared}>
+                    Neue Inventur starten (Ist & Chargen in SharePoint leeren)
+                  </button>
+                )}
+                <button className="textbtn" onClick={() => logout()}>
+                  Abmelden
+                </button>
+              </div>
+            )}
             <button className="danger" onClick={() => clear('scans')}>
-              Alle Scans löschen
+              {shared ? 'Scan-Verlauf auf diesem Gerät löschen' : 'Alle Scans löschen'}
             </button>
-            <button className="danger" onClick={() => clear('targets')}>
-              Soll-Liste entfernen
-            </button>
+            {!shared && (
+              <button className="danger" onClick={() => clear('targets')}>
+                Soll-Liste entfernen
+              </button>
+            )}
             <button className="danger" onClick={() => clear('mappings')}>
-              Gelernte Zuordnungen löschen ({Object.keys(mappings).length})
+              Gelernte Zuordnungen auf diesem Gerät löschen ({Object.keys(mappings).length})
             </button>
-            <p className="meta">Alle Daten bleiben nur in diesem Browser auf diesem Gerät gespeichert.</p>
+            <p className="meta">
+              {shared
+                ? 'Ist und Chargen-Nr. stehen direkt in der SharePoint-Liste. Gelernte Zuordnungen werden im versteckten Blatt „App-Zuordnungen“ der Datei für alle Kollegen gespeichert.'
+                : 'Alle Daten bleiben nur in diesem Browser auf diesem Gerät gespeichert.'}
+            </p>
             <div className="actions flush">
               <button className="btn primary" onClick={() => setShowSettings(false)}>
                 Fertig
@@ -393,6 +647,22 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {browsing && (
+        <SpBrowser
+          onClose={() => setBrowsing(false)}
+          onPick={async (e) => {
+            setBrowsing(false);
+            try {
+              const f = await getFileInfo({ driveId: e.driveId, itemId: e.id });
+              setSpFile(f);
+              await refreshShared(f);
+            } catch (err) {
+              setSpError(`Datei konnte nicht geöffnet werden: ${err instanceof Error ? err.message : err}`);
+            }
+          }}
+        />
       )}
 
       {busy && <div className="toast">{busy}</div>}
@@ -436,8 +706,9 @@ function TargetPicker({ targets, onClose, onPick }: { targets: TargetItem[]; onC
   );
 }
 
-function ReconItem({ row }: { row: ReconRow }) {
-  const batches = [...new Set(row.scans.map((s) => s.batch))].join(', ');
+function ReconItem({ row, shared }: { row: ReconRow; shared?: boolean }) {
+  const batches = shared ? (row.item.currentBatch ?? '') : [...new Set(row.scans.map((s) => s.batch))].join(', ');
+  const open = shared && (row.item.currentIst === null || row.item.currentIst === undefined);
   return (
     <div className={`row st-${row.status}`}>
       <div className="grow">
@@ -454,7 +725,7 @@ function ReconItem({ row }: { row: ReconRow }) {
         <div className="qty">
           {row.foundQty}/{row.item.expectedQty}
         </div>
-        <div className="status">{row.status === 'fehlend' ? 'FEHLT' : row.status}</div>
+        <div className="status">{open ? 'offen' : row.status === 'fehlend' ? 'FEHLT' : row.status}</div>
       </div>
     </div>
   );
@@ -512,5 +783,71 @@ function Field(props: {
         spellCheck={false}
       />
     </label>
+  );
+}
+
+function SpBrowser({ onClose, onPick }: { onClose: () => void; onPick: (e: BrowseEntry) => void }) {
+  const [stack, setStack] = useState<{ title: string; entries: BrowseEntry[] }[]>([]);
+  const [err, setErr] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const site = await siteFromUrl(MS_CONFIG.defaultFileUrl);
+        if (!site) throw new Error('Website nicht gefunden.');
+        setStack([{ title: 'Dokumentbibliotheken', entries: await listDrives(site) }]);
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  async function open(e: BrowseEntry) {
+    if (e.kind === 'file') return onPick(e);
+    setLoading(true);
+    try {
+      setStack((s) => [...s]);
+      const entries = await listFolder(e.driveId, e.id);
+      setStack((s) => [...s, { title: e.name, entries }]);
+    } catch (x) {
+      setErr(x instanceof Error ? x.message : String(x));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const cur = stack[stack.length - 1];
+  return (
+    <div className="fullscreen">
+      <header className="header">
+        {stack.length > 1 && (
+          <button className="textbtn" onClick={() => setStack((s) => s.slice(0, -1))}>
+            ‹ Zurück
+          </button>
+        )}
+        <h1 className="grow" style={{ fontSize: 20 }}>
+          {cur?.title ?? 'SharePoint'}
+        </h1>
+        <button className="textbtn" onClick={onClose}>
+          Abbrechen
+        </button>
+      </header>
+      <p className="meta pad">Bitte die Excel-Bestandsliste auswählen.</p>
+      {err && <div className="errorbar">{err}</div>}
+      {loading && <p className="empty">Wird geladen …</p>}
+      <div className="list">
+        {!loading &&
+          cur?.entries.map((e) => (
+            <button key={e.driveId + e.id} className="row pick" onClick={() => open(e)}>
+              <span className="size">{e.kind === 'file' ? '📄' : '📁'}</span>
+              <div className="grow row-title">{e.name}</div>
+            </button>
+          ))}
+        {!loading && cur && cur.entries.length === 0 && <p className="empty">Keine Ordner oder Excel-Dateien.</p>}
+      </div>
+    </div>
   );
 }

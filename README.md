@@ -20,6 +20,21 @@ Läuft im Browser auf Android, iPhone und iPad – ohne Installation.
 Alle Daten bleiben im Browser des jeweiligen Geräts gespeichert (auch offline nutzbar, sobald geladen).
 Tipp: Über „Zum Startbildschirm hinzufügen“ verhält sich die Seite wie eine App.
 
+## Gemeinsame Liste in SharePoint
+
+Nach **Anmelden** mit dem Firmenkonto arbeitet die App direkt in der geteilten Excel-Liste
+(Link und App-Kennung in `src/config.ts`):
+
+- Jeder Scan erhöht sofort „Ist“ in der passenden Zeile und ergänzt die Chargen-Nr.
+  Es werden nur einzelne Zellen geändert, mehrere Personen können gleichzeitig scannen.
+- Der Stand der Kollegen wird jede Minute neu geladen (oder über ⟳).
+- Gelernte Zuordnungen (UDI-DI → Zeile) landen im versteckten Blatt „App-Zuordnungen“ und gelten für alle.
+- **Abschließen & Exportieren → Inventur abschließen** setzt leere Ist-Felder auf 0 und trägt Datum und Prüfer ein.
+- **Einstellungen → Neue Inventur starten** leert Ist und Chargen-Nr. aller Artikelzeilen.
+
+Voraussetzung: App-Registrierung in Microsoft Entra (Single-Page-Anwendung, Umleitungs-URI
+`https://janssturmaktiv.github.io/Inventur-APP/`, delegierte Berechtigung `Files.ReadWrite.All`).
+
 ## Entwicklung
 
 ```bash

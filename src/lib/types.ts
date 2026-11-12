@@ -10,6 +10,8 @@ export type TargetItem = {
   batch?: string; // optional: erwartete Charge
   expectedQty: number;
   row?: number; // Zeilennummer in der Excel-Datei (1-basiert)
+  currentIst?: number | null; // aktueller Wert der Spalte „Ist“ (null = leer)
+  currentBatch?: string; // aktueller Wert der Spalte „Chargen-Nr.“
 };
 
 /** Woher die Soll-Liste stammt und wohin zurückgeschrieben wird. */
@@ -36,6 +38,8 @@ export type Scan = {
   scannedAt: string; // ISO
   scannedBy?: string;
   targetKey?: string; // manuell gewählte Soll-Zeile
+  sync?: 'ok' | 'pending' | 'unassigned'; // Stand in der SharePoint-Liste
+  syncedRow?: number; // in diese Zeile eingetragen
 };
 
 /** Gelernte Zuordnung: UDI-DI -> Soll-Zeile (key). */

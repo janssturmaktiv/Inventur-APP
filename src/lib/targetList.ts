@@ -59,6 +59,8 @@ export function parseTargetWorkbook(base64: string, fileName: string): ParsedTar
         batch: cell(r, idx.batchExpected) || undefined,
         expectedQty: Number(qtyText.replace(',', '.')) || 1,
         row: excelRow,
+        currentIst: idx.ist === undefined || cell(r, idx.ist) === '' ? null : Number(cell(r, idx.ist).replace(',', '.')) || 0,
+        currentBatch: cell(r, idx.batchOut) || undefined,
       });
     });
     if (!items.length) continue;

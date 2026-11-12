@@ -7,9 +7,10 @@
     "dev": "vite --host",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host",
-    "test": "tsx tests/gs1.test.ts && tsx tests/udi.test.ts && tsx tests/reconcile.test.ts && tsx tests/listAndWriteback.test.ts"
+    "test": "tsx tests/gs1.test.ts && tsx tests/udi.test.ts && tsx tests/reconcile.test.ts && tsx tests/listAndWriteback.test.ts && tsx tests/sharepoint.test.ts"
   },
   "dependencies": {
+    "@azure/msal-browser": "^5.29.0",
     "barcode-detector": "^3.2.3",
     "jszip": "^3.10.2",
     "react": "^19.3.1",
