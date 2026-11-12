@@ -38,7 +38,7 @@ export type Scan = {
   scannedAt: string; // ISO
   scannedBy?: string;
   targetKey?: string; // manuell gewählte Soll-Zeile
-  sync?: 'ok' | 'pending' | 'unassigned'; // Stand in der SharePoint-Liste
+  sync?: 'ok' | 'pending' | 'unassigned' | 'mailed'; // Stand in der SharePoint-Liste
   syncedRow?: number; // in diese Zeile eingetragen
 };
 

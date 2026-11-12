@@ -20,7 +20,13 @@ Läuft im Browser auf Android, iPhone und iPad – ohne Installation.
 Alle Daten bleiben im Browser des jeweiligen Geräts gespeichert (auch offline nutzbar, sobald geladen).
 Tipp: Über „Zum Startbildschirm hinzufügen“ verhält sich die Seite wie eine App.
 
-## Gemeinsame Liste in SharePoint
+## Gemeinsame Liste ohne Admin-Freigabe (E-Mail + Power Automate)
+
+Die App sammelt die Scans und schickt sie per E-Mail an ein Postfach. Ein Power-Automate-Ablauf ruft das
+Office Script [`office-script/inventur-scans-eintragen.ts`](office-script/inventur-scans-eintragen.ts) auf,
+das Ist und Chargen-Nr. in die SharePoint-Liste schreibt. Einrichtung: [ANLEITUNG-POWER-AUTOMATE.md](ANLEITUNG-POWER-AUTOMATE.md).
+
+## Gemeinsame Liste in SharePoint (mit Admin-Freigabe)
 
 Nach **Anmelden** mit dem Firmenkonto arbeitet die App direkt in der geteilten Excel-Liste
 (Link und App-Kennung in `src/config.ts`):

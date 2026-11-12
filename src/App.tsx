@@ -9,6 +9,7 @@ import { parseTargetWorkbook } from './lib/targetList';
 import { reconcile, findTarget, type ReconRow, type Reconciliation, type Status } from './lib/reconcile';
 import { buildFilledOriginal, buildReport, canShareFile, downloadFile, printReport, shareFile, type ExportFile } from './lib/exportWeb';
 import { load, usePersisted } from './lib/storage';
+import { buildMailBatches, mailtoUrl, type MailBatch } from './lib/mailSync';
 import { itemLabel, type Mappings, type Scan, type TargetItem, type TargetSource } from './lib/types';
 
 const KEYS = {
@@ -22,7 +23,7 @@ const KEYS = {
 };
 
 type Draft = Omit<Scan, 'id' | 'scannedAt' | 'quantity'> & { quantity: string };
-type Settings = { userName: string; listName: string };
+type Settings = { userName: string; listName: string; mailTo?: string };
 type Filter = 'alle' | Status | 'unbekannt';
 
 const emptyDraft = (): Draft => ({ batch: '', udiDi: '', expiry: '', quantity: '1', raw: '', codeType: 'manuell' });
@@ -66,6 +67,20 @@ export default function App() {
   const [spError, setSpError] = useState('');
   const [browsing, setBrowsing] = useState(false);
   const shared = !!(account && spFile);
+  const [mailBatches, setMailBatches] = useState<MailBatch[] | null>(null);
+  const mailMode = !shared && !!settings.mailTo;
+
+  // Link mit ?an=<E-Mail> richtet den E-Mail-Versand ein (zum Weitergeben an Kollegen)
+  useEffect(() => {
+    const u = new URL(window.location.href);
+    const an = u.searchParams.get('an');
+    if (an && /@/.test(an)) {
+      setSettings((st) => ({ ...st, mailTo: an }));
+      u.searchParams.delete('an');
+      window.history.replaceState(null, '', u.pathname + u.search + u.hash);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const localRecon = useMemo(() => reconcile(targets, scans, mappings), [targets, scans, mappings]);
   // Im SharePoint-Modus zählt der Stand der gemeinsamen Datei (inkl. Scans der Kollegen)
@@ -148,6 +163,27 @@ export default function App() {
     }, 60_000);
     return () => clearInterval(t);
   }, [shared, scanning, draft, spFile, refreshShared]);
+
+  const unsent = mailMode ? scans.filter((x) => x.sync !== 'mailed' && targets.length && findTarget(targets, x, mappings)) : [];
+
+  function prepareMail(finish = false) {
+    setExportMenu(false);
+    if (!settings.mailTo) {
+      setShowSettings(true);
+      return alert('Bitte zuerst in den Einstellungen die E-Mail-Adresse für die gemeinsame Liste eintragen.');
+    }
+    if (finish && !confirm('Inventur abschließen?\n\nIn der gemeinsamen Liste werden alle Artikel ohne Ist-Wert auf 0 gesetzt (→ nachbestellen), dazu Datum und „Geprüft von“.')) return;
+    const b = buildMailBatches(unsent, targets, mappings, settings.userName, finish);
+    if (!b.length) return alert('Keine neuen Scans zum Senden.');
+    setMailBatches(b);
+  }
+
+  function openMail(b: MailBatch) {
+    window.location.href = mailtoUrl(settings.mailTo!, b);
+    const ids = new Set(b.scanIds);
+    setScans((p) => p.map((x) => (ids.has(x.id) ? { ...x, sync: 'mailed' } : x)));
+    setMailBatches((list) => (list ? list.map((x) => (x === b ? { ...x, scanIds: [], subject: x.subject + ' ✓' } : x)) : list));
+  }
 
   async function pushScan(scan: Scan, target: TargetItem) {
     if (!spFile || !source || !target.row) return;
@@ -367,7 +403,18 @@ export default function App() {
         </button>
       </header>
 
-      {!account && (
+      {mailMode && unsent.length > 0 && (
+        <div className="signin">
+          <div className="grow">
+            <b>{unsent.length} Scan(s) noch nicht in der gemeinsamen Liste</b>
+            <span>Per E-Mail senden, Power Automate trägt sie in SharePoint ein.</span>
+          </div>
+          <button className="btn primary" onClick={() => prepareMail(false)}>
+            Senden
+          </button>
+        </div>
+      )}
+      {!account && !settings.mailTo && (
         <div className="signin">
           <div className="grow">
             <b>Gemeinsame Liste in SharePoint</b>
@@ -524,7 +571,19 @@ export default function App() {
       {exportMenu && (
         <div className="backdrop" onClick={() => setExportMenu(false)}>
           <div className="sheet" onClick={(e) => e.stopPropagation()}>
-            <h2>{shared ? 'Abschließen & Exportieren' : 'Exportieren'}</h2>
+            <h2>{shared || mailMode ? 'Abschließen & Exportieren' : 'Exportieren'}</h2>
+            {mailMode && (
+              <>
+                <button className="menu-item" onClick={() => prepareMail(false)}>
+                  <b>Scans an gemeinsame Liste senden</b>
+                  <span>{unsent.length} neue Scan(s) per E-Mail an {settings.mailTo}</span>
+                </button>
+                <button className="menu-item" onClick={() => prepareMail(true)}>
+                  <b>Inventur abschließen</b>
+                  <span>Restliche Scans senden, in der gemeinsamen Liste fehlende Artikel auf 0 setzen, Datum und Prüfer eintragen</span>
+                </button>
+              </>
+            )}
             {shared && (
               <button className="menu-item" onClick={finishShared}>
                 <b>Inventur abschließen</b>
@@ -593,6 +652,24 @@ export default function App() {
             <h2>Einstellungen</h2>
             <Field label="Dein Name (für „Geprüft von“ und bei jedem Scan)" value={settings.userName} onChange={(v) => setSettings((s) => ({ ...s, userName: v }))} caps="words" />
             <Field label="Name der Inventur" value={settings.listName} onChange={(v) => setSettings((s) => ({ ...s, listName: v }))} caps="sentences" />
+            {!shared && (
+              <label className="field">
+                <span>E-Mail-Adresse für die gemeinsame Liste (Power Automate)</span>
+                <input
+                  className="input"
+                  type="email"
+                  value={settings.mailTo ?? ''}
+                  onChange={(e) => setSettings((s) => ({ ...s, mailTo: e.target.value.trim() }))}
+                  placeholder="z. B. inventur@firma.de"
+                  autoCapitalize="none"
+                />
+              </label>
+            )}
+            {!account && (
+              <button className="textbtn" onClick={() => login().catch((e) => alert(e?.message ?? e))}>
+                Mit Microsoft anmelden (direkter SharePoint-Zugriff, braucht Admin-Freigabe)
+              </button>
+            )}
             {account && (
               <div className="settings-block">
                 <p className="meta">
@@ -663,6 +740,32 @@ export default function App() {
             }
           }}
         />
+      )}
+
+      {mailBatches && (
+        <div className="backdrop" onClick={() => setMailBatches(null)}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()}>
+            <h2>An gemeinsame Liste senden</h2>
+            <p className="meta">
+              Tippe auf {mailBatches.length > 1 ? 'jede E-Mail nacheinander' : 'die E-Mail'}. Deine Mail-App öffnet sich mit fertigem Text an {settings.mailTo}, dort nur noch auf
+              „Senden“ tippen. Nach ca. 1 Minute steht alles in der SharePoint-Liste.
+            </p>
+            {mailBatches.map((b, i) => (
+              <button key={i} className="menu-item" disabled={!b.scanIds.length && !b.body.includes('\nF;')} onClick={() => openMail(b)}>
+                <b>{b.subject.endsWith('✓') ? `${b.subject}` : `E-Mail ${mailBatches.length > 1 ? `${i + 1} von ${mailBatches.length} ` : ''}öffnen`}</b>
+                <span>
+                  {b.scanIds.length ? `${b.scanIds.length} Scan(s)` : b.subject.endsWith('✓') ? 'geöffnet' : ''}
+                  {b.body.includes('\nF;') ? ' + Inventur abschließen' : ''}
+                </span>
+              </button>
+            ))}
+            <div className="actions flush">
+              <button className="btn primary" onClick={() => setMailBatches(null)}>
+                Fertig
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {busy && <div className="toast">{busy}</div>}
