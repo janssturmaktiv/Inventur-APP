@@ -7,7 +7,7 @@
     "dev": "vite --host",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host",
-    "test": "tsx tests/gs1.test.ts && tsx tests/udi.test.ts && tsx tests/reconcile.test.ts && tsx tests/listAndWriteback.test.ts && tsx tests/sharepoint.test.ts && tsx tests/officeScript.test.ts && tsx tests/mailFlow.test.ts"
+    "test": "tsx tests/gs1.test.ts && tsx tests/udi.test.ts && tsx tests/reconcile.test.ts && tsx tests/listAndWriteback.test.ts && tsx tests/sharepoint.test.ts && tsx tests/officeScript.test.ts && tsx tests/mailFlow.test.ts && tsx tests/gtinTable.test.ts"
   },
   "dependencies": {
     "@azure/msal-browser": "^5.29.0",
