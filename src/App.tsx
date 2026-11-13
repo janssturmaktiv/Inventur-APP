@@ -56,7 +56,8 @@ export default function App() {
   const [original, setOriginal] = usePersisted<string>(KEYS.original, '');
   const [learnedMappings, setMappings] = usePersisted<Mappings>(KEYS.mappings, {});
   // feste Zuordnungen (für alle) + auf diesem Gerät gelernte
-  const mappings = useMemo<Mappings>(() => ({ ...GTIN_ZUORDNUNG, ...learnedMappings }), [learnedMappings]);
+  // Die eingebaute Tabelle hat Vorrang: alte, evtl. falsch gemerkte Zuordnungen überschreiben sie nicht
+  const mappings = useMemo<Mappings>(() => ({ ...learnedMappings, ...GTIN_ZUORDNUNG }), [learnedMappings]);
   const [settings, setSettings] = usePersisted<Settings>(KEYS.settings, { userName: '', listName: '' });
   const [tab, setTab] = useState<'abgleich' | 'scans'>('abgleich');
   const [filter, setFilter] = useState<Filter>('alle');
@@ -275,7 +276,7 @@ export default function App() {
     // Zuordnung merken: dieselbe UDI-DI wird künftig automatisch erkannt
     const idKey = normId(scan.udiDi) || normId(scan.productCode);
     const newMappings = scan.targetKey && idKey ? { ...mappings, [idKey]: scan.targetKey } : mappings;
-    if (newMappings !== mappings) setMappings(newMappings);
+    if (newMappings !== mappings) setMappings({ ...learnedMappings, [idKey]: scan.targetKey! });
     if (shared) {
       const target = findTarget(targets, scan, newMappings);
       if (target?.row) {

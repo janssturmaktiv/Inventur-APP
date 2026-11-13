@@ -14,3 +14,15 @@ for (const [gtin, key] of Object.entries(GTIN_ZUORDNUNG)) {
 }
 console.log(fail ? `gtinTable: ${fail} Fehler` : `gtinTable: ${keys.size} Einträge ok`);
 if (fail) process.exit(1);
+
+// Eingebaute Tabelle schlägt alte Handzuordnung und falsch gemerkte Zuordnung
+import { findTarget } from '../src/lib/reconcile';
+import { STANDARD_LISTE } from '../src/data/standardListe';
+const hit = findTarget(STANDARD_LISTE, { udiDi: '04029925258897', batch: 'X', targetKey: '07382|LINKS|3' }, { '4029925258897': '07382|LINKS|3' });
+if (hit?.key !== '07382|LINKS|2') { console.error('FAIL Vorrang eingebaute Tabelle', hit?.key); process.exit(1); }
+// Jede GTIN der Tabelle landet in genau ihrer Zeile der Standardliste
+for (const [g, key] of Object.entries(GTIN_ZUORDNUNG)) {
+  const t = findTarget(STANDARD_LISTE, { udiDi: '0' + g, batch: 'X' }, {});
+  if (STANDARD_LISTE.some((x) => x.key === key) && t?.key !== key) { console.error('FAIL', g, key, t?.key); process.exit(1); }
+}
+console.log('gtinTable: Vorrang + Zeilenzuordnung ok');

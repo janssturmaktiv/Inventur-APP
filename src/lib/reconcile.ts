@@ -1,5 +1,6 @@
 import { normId } from './udi';
 import type { Mappings, Scan, TargetItem } from './types';
+import { GTIN_ZUORDNUNG } from '../data/gtinZuordnung';
 
 export type Status = 'vollständig' | 'teilweise' | 'fehlend';
 
@@ -19,6 +20,9 @@ export type Reconciliation = {
 type ScanIds = Pick<Scan, 'udiDi' | 'productCode' | 'batch' | 'targetKey'>;
 
 function productMatches(item: TargetItem, scan: ScanIds, mappings: Mappings): boolean {
+  // Eingebaute GTIN-Tabelle ist verbindlich, auch gegenüber früher von Hand gewählten Zeilen
+  const fixed = GTIN_ZUORDNUNG[normId(scan.udiDi)] ?? GTIN_ZUORDNUNG[normId(scan.productCode)];
+  if (fixed) return fixed === item.key;
   if (scan.targetKey) return scan.targetKey === item.key;
   const learned = mappings[normId(scan.udiDi)] ?? mappings[normId(scan.productCode)];
   if (learned) return learned === item.key;
