@@ -10,6 +10,7 @@ import { reconcile, findTarget, type ReconRow, type Reconciliation, type Status 
 import { buildFilledOriginal, buildReport, canShareFile, downloadFile, printReport, shareFile, type ExportFile } from './lib/exportWeb';
 import { load, usePersisted } from './lib/storage';
 import { GTIN_ZUORDNUNG } from './data/gtinZuordnung';
+import { STANDARD_LISTE, STANDARD_LISTE_NAME } from './data/standardListe';
 import * as XLSX from 'xlsx';
 import { buildMailBatches, mailtoUrl, type MailBatch } from './lib/mailSync';
 import { itemLabel, type Mappings, type Scan, type TargetItem, type TargetSource } from './lib/types';
@@ -47,7 +48,10 @@ function fileToBase64(file: File): Promise<string> {
 
 export default function App() {
   const [scans, setScans] = usePersisted<Scan[]>(KEYS.scans, []);
-  const [targets, setTargets] = usePersisted<TargetItem[]>(KEYS.targets, []);
+  const [importedTargets, setTargets] = usePersisted<TargetItem[]>(KEYS.targets, []);
+  // Ohne eigenen Import gilt die eingebaute Standardliste, niemand muss etwas laden
+  const usingStandard = importedTargets.length === 0;
+  const targets = usingStandard ? STANDARD_LISTE : importedTargets;
   const [source, setSource] = usePersisted<TargetSource | null>(KEYS.source, null);
   const [original, setOriginal] = usePersisted<string>(KEYS.original, '');
   const [learnedMappings, setMappings] = usePersisted<Mappings>(KEYS.mappings, {});
@@ -441,7 +445,7 @@ export default function App() {
           <h1>Konsilager</h1>
           <div className="sub">
             {shared ? '☁︎ SharePoint: ' : settings.listName ? 'Liste: ' : ''}
-            {settings.listName || 'Keine Soll-Liste importiert'}
+            {settings.listName || (usingStandard ? STANDARD_LISTE_NAME : 'Soll-Liste')}
             {settings.userName ? ` · ${settings.userName}` : ''}
           </div>
           {shared && lastSync && <div className="sub small">Stand {lastSync.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}</div>}
