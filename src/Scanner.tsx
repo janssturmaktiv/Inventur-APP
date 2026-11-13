@@ -19,11 +19,28 @@ function getDetector() {
 
 const FORMAT_NAMES: Record<string, string> = { qr_code: 'qr', data_matrix: 'datamatrix', code_128: 'code128', code_39: 'code39' };
 
-export function Scanner({ onResult, onClose }: { onResult: (text: string, format: string) => void; onClose: () => void }) {
+// Im Dauermodus wird derselbe Code erst wieder gezählt, wenn er kurz aus dem Bild war
+// (mind. 1 s nicht gesehen) und seit dem letzten Treffer mind. 2 s vergangen sind.
+const SAME_CODE_GAP = 2000;
+const SAME_CODE_ABSENT = 1000;
+
+type Props = {
+  /** true zurückgeben = gespeichert, Kamera bleibt offen (Dauermodus) */
+  onResult: (text: string, format: string) => boolean | void;
+  onClose: () => void;
+  continuous?: boolean;
+  feedback?: string;
+};
+
+export function Scanner({ onResult, onClose, continuous, feedback }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState('');
   const [torch, setTorch] = useState<boolean | null>(null); // null = nicht verfügbar
   const trackRef = useRef<MediaStreamTrack | null>(null);
+  const onResultRef = useRef(onResult);
+  onResultRef.current = onResult;
+  const continuousRef = useRef(continuous);
+  continuousRef.current = continuous;
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -49,16 +66,31 @@ export function Scanner({ onResult, onClose }: { onResult: (text: string, format
         }
 
         const det = getDetector();
+        let last = '';
+        let lastHit = 0;
+        let lastSeen = 0;
         const tick = async () => {
           if (stopped) return;
           try {
             if (video.readyState >= 2) {
               const codes = await det.detect(video);
+              const now = Date.now();
               if (codes.length && !stopped) {
-                stopped = true;
-                navigator.vibrate?.(80);
-                onResult(codes[0].rawValue, FORMAT_NAMES[codes[0].format] ?? codes[0].format);
-                return;
+                const text = codes[0].rawValue;
+                const repeat = text === last && (now - lastHit < SAME_CODE_GAP || now - lastSeen < SAME_CODE_ABSENT);
+                if (text === last) lastSeen = now;
+                if (!repeat) {
+                  navigator.vibrate?.(80);
+                  const keepOpen = continuousRef.current && onResultRef.current(text, FORMAT_NAMES[codes[0].format] ?? codes[0].format) === true;
+                  if (!continuousRef.current) {
+                    stopped = true;
+                    onResultRef.current(text, FORMAT_NAMES[codes[0].format] ?? codes[0].format);
+                    return;
+                  }
+                  if (!keepOpen) return; // Kontrolle wird angezeigt, Scanner schließt
+                  last = text;
+                  lastHit = lastSeen = now;
+                }
               }
             }
           } catch (e) {
@@ -84,7 +116,7 @@ export function Scanner({ onResult, onClose }: { onResult: (text: string, format
       clearTimeout(timer);
       stream?.getTracks().forEach((t) => t.stop());
     };
-  }, [onResult]);
+  }, []);
 
   async function toggleTorch() {
     const track = trackRef.current;
@@ -102,7 +134,14 @@ export function Scanner({ onResult, onClose }: { onResult: (text: string, format
       <video ref={videoRef} playsInline muted />
       <div className="scanner-frame" />
       <div className="scanner-bar">
-        {error ? <p className="scanner-error">{error}</p> : <p>UDI-Code in den Rahmen halten</p>}
+        {error ? (
+          <p className="scanner-error">{error}</p>
+        ) : feedback ? (
+          <p className="scanner-feedback">{feedback}</p>
+        ) : (
+          <p>UDI-Code in den Rahmen halten</p>
+        )}
+        {!error && continuous && <p className="scanner-hint">Schnell-Scannen an: nächsten Code einfach ins Bild halten</p>}
         <div className="row-buttons">
           {torch !== null && (
             <button className="btn" onClick={toggleTorch}>
@@ -110,7 +149,7 @@ export function Scanner({ onResult, onClose }: { onResult: (text: string, format
             </button>
           )}
           <button className="btn" onClick={onClose}>
-            Abbrechen
+            {continuous ? 'Fertig' : 'Abbrechen'}
           </button>
         </div>
       </div>

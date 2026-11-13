@@ -25,7 +25,7 @@ const KEYS = {
 };
 
 type Draft = Omit<Scan, 'id' | 'scannedAt' | 'quantity'> & { quantity: string };
-type Settings = { userName: string; listName: string; mailTo?: string };
+type Settings = { userName: string; listName: string; mailTo?: string; quickScan?: boolean };
 type Filter = 'alle' | Status | 'unbekannt';
 
 const emptyDraft = (): Draft => ({ batch: '', udiDi: '', expiry: '', quantity: '1', raw: '', codeType: 'manuell' });
@@ -217,10 +217,22 @@ export default function App() {
     setTimeout(() => setToast(''), 2500);
   };
 
-  const onScanned = useCallback((text: string, format: string) => {
+  const [scanFeedback, setScanFeedback] = useState('');
+  const quickScanRef = useRef<(d: Draft) => boolean>(() => false);
+  quickScanRef.current = (d: Draft) => {
+    // Schnellmodus: erkannte Produkte ohne Kontrolle speichern, Kamera bleibt offen
+    if (!settings.quickScan || !d.batch) return false;
+    const target = targets.length ? findTarget(targets, d, mappings) : undefined;
+    if (!target) return false;
+    if (d.serial && scans.some((s) => s.serial === d.serial && normId(s.udiDi) === normId(d.udiDi))) return false;
+    if (!saveScan(d, false)) return false;
+    setScanFeedback(`✓ ${itemLabel(target)} · Charge ${d.batch}`);
+    return true;
+  };
+
+  const onScanned = useCallback((text: string, format: string): boolean => {
     const udi = parseUdi(text);
-    setScanning(false);
-    setDraft({
+    const d: Draft = {
       udiDi: udi.udiDi ?? '',
       productCode: udi.productCode,
       batch: udi.batch ?? (udi.issuer === 'unbekannt' ? text : ''),
@@ -229,11 +241,19 @@ export default function App() {
       quantity: '1',
       raw: text,
       codeType: format,
-    });
+    };
+    if (quickScanRef.current(d)) return true;
+    setScanning(false);
+    setScanFeedback('');
+    setDraft(d);
+    return false;
   }, []);
 
   function saveDraft(): boolean {
-    if (!draft) return false;
+    return draft ? saveScan(draft, true) : false;
+  }
+
+  function saveScan(draft: Draft, fromDialog: boolean): boolean {
     if (!draft.batch.trim()) {
       alert('Bitte eine Chargennummer eingeben.');
       return false;
@@ -264,8 +284,10 @@ export default function App() {
       } else scan.sync = 'unassigned';
     }
     setScans((prev) => [scan, ...prev]);
-    setDraft(null);
-    flash('Gespeichert');
+    if (fromDialog) {
+      setDraft(null);
+      flash('Gespeichert');
+    }
     return true;
   }
 
@@ -509,6 +531,13 @@ export default function App() {
         </button>
         <input ref={fileInput} type="file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden onChange={onFileChosen} />
       </div>
+      <label className="quickscan">
+        <input type="checkbox" checked={!!settings.quickScan} onChange={(e) => setSettings((x) => ({ ...x, quickScan: e.target.checked }))} />
+        <span>
+          Schnell-Scannen: erkannte Produkte ohne Kontrolle speichern
+          <small>Unbekannte Codes oder fehlende Charge zeigen weiterhin die Kontrolle.</small>
+        </span>
+      </label>
 
       <nav className="tabs">
         <button className={tab === 'abgleich' ? 'active' : ''} onClick={() => setTab('abgleich')}>
@@ -550,7 +579,17 @@ export default function App() {
         )}
       </main>
 
-      {scanning && <Scanner onResult={onScanned} onClose={() => setScanning(false)} />}
+      {scanning && (
+        <Scanner
+          onResult={onScanned}
+          continuous={!!settings.quickScan}
+          feedback={scanFeedback}
+          onClose={() => {
+            setScanning(false);
+            setScanFeedback('');
+          }}
+        />
+      )}
 
       {draft && !picking && (
         <div className="backdrop">

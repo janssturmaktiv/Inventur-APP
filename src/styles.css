@@ -93,3 +93,10 @@ button { font: inherit; color: inherit; cursor: pointer; -webkit-tap-highlight-c
 .settings-block { border-bottom: 1px solid #e1e4e8; margin-bottom: 8px; padding-bottom: 8px; display: flex; flex-direction: column; align-items: flex-start; }
 .settings-block .textbtn { padding: 8px 0; font-size: 16px; }
 .group { margin: 18px 16px 0; padding: 8px 12px; background: #dde8f6; color: #1f3864; border-radius: 8px; font-size: 14px; font-weight: 700; }
+
+.scanner-bar .btn { background: rgba(0,0,0,.6); border-color: rgba(255,255,255,.7); color: #fff; }
+.scanner-feedback { background: rgba(26,127,55,.92); padding: 10px; border-radius: 8px; font-weight: 600; }
+.quickscan { display: flex; gap: 10px; align-items: flex-start; margin: -4px 16px 12px; font-size: 15px; }
+.quickscan input { width: 22px; height: 22px; margin: 1px 0 0; flex: none; accent-color: var(--primary); }
+.quickscan small { display: block; color: #666; font-size: 13px; margin-top: 2px; }
+.scanner-bar p.scanner-hint { font-size: 13px; opacity: .85; }
