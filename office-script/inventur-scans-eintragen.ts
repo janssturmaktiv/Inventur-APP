@@ -54,6 +54,7 @@ function main(workbook: ExcelScript.Workbook, mailBody: string): string {
         col.side = h.findIndex((x) => /^(seite|links\/rechts|l\/r)$/.test(x));
         col.size = h.findIndex((x) => /^(gr(ö|oe)(ß|ss)e|gr\.|size)$/.test(x));
         col.batch = h.findIndex((x) => /^charge(n)?[\s.\-]*(nr|nummer)?\.?$|^lot$/.test(x));
+        col.gtin = h.findIndex((x) => /(gtin|udi|ean)/.test(x));
         break;
       }
     }
@@ -76,6 +77,8 @@ function main(workbook: ExcelScript.Workbook, mailBody: string): string {
 
   const istCol = colOffset + col.ist;
   const batchCol = col.batch >= 0 ? colOffset + col.batch : -1;
+  const gtinCol = col.gtin >= 0 ? colOffset + col.gtin : -1;
+  let learned = 0;
   let added = 0;
   const missing: string[] = [];
   let finishedBy = '';
@@ -104,6 +107,15 @@ function main(workbook: ExcelScript.Workbook, mailBody: string): string {
           bCell.setValue(list.join(', '));
         }
       }
+      // GTIN in der Liste vermerken (falls Spalte vorhanden und noch leer): dann erkennen alle Handys den Code
+      const gtin = (p[4] || '').trim();
+      if (gtinCol >= 0 && gtin) {
+        const gCell = ws.getCell(r, gtinCol);
+        if (String(gCell.getValue()).trim() === '') {
+          gCell.setValue("'" + gtin);
+          learned++;
+        }
+      }
       added += qty;
     } else if (p[0] === 'F') {
       finishedBy = (p[1] || '').trim() || '–';
@@ -117,11 +129,12 @@ function main(workbook: ExcelScript.Workbook, mailBody: string): string {
     }
     // Inventurdatum und „Geprüft von“ oberhalb der Kopfzeile: Wert steht rechts neben der Beschriftung
     const now = new Date();
-    const date = `${String(now.getDate()).padStart(2, '0')}.${String(now.getMonth() + 1).padStart(2, '0')}.${now.getFullYear()}`;
+    // Excel-Seriennummer, damit die Zelle ein echtes Datum bleibt
+    const date = Math.round((Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) - Date.UTC(1899, 11, 30)) / 86400000);
     for (let r = 0; r < headerRow; r++) {
       for (let c = 0; c < texts[r].length; c++) {
         const label = norm(texts[r][c]);
-        const setRight = (value: string) => {
+        const setRight = (value: string | number) => {
           let target = c + 1;
           for (let k = c + 1; k < Math.min(texts[r].length, c + 4); k++) {
             if (String(texts[r][k]).trim()) {
@@ -138,6 +151,7 @@ function main(workbook: ExcelScript.Workbook, mailBody: string): string {
   }
 
   let msg = `${added} Stück eingetragen.`;
+  if (learned) msg += ` ${learned} GTIN(s) in der Liste ergänzt.`;
   if (missing.length) msg += ` Nicht gefunden: ${missing.join(', ')}.`;
   if (finishedBy) msg += ' Inventur abgeschlossen.';
   return msg;

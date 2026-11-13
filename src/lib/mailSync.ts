@@ -14,7 +14,7 @@ export function buildMailBatches(scans: Scan[], targets: TargetItem[], mappings:
   for (const s of [...scans].reverse()) {
     const t = findTarget(targets, s, mappings);
     if (!t) continue;
-    lines.push({ line: `A;${clean(t.key)};${s.quantity};${clean(s.batch)}`, id: s.id });
+    lines.push({ line: `A;${clean(t.key)};${s.quantity};${clean(s.batch)};${clean(s.udiDi ?? '')}`, id: s.id });
   }
   const head = `Bitte nicht ändern – wird automatisch in die Bestandsliste eingetragen.\n\n###INVENTUR-V1###\nS;${clean(sender || 'unbekannt')}\n`;
   const tail = '###ENDE###\n';

@@ -4,6 +4,7 @@ import { MAPPING_SHEET } from '../config';
 import { addHiddenSheet, downloadBase64, listSheets, readRange, usedRangeValues, writeRange, type FileRef } from './msGraph';
 import { parseTargetWorkbook } from './targetList';
 import { normId } from './udi';
+import { excelToday } from './excelDate';
 import { itemLabel, type Mappings, type TargetItem, type TargetSource } from './types';
 
 export type SharedState = { items: TargetItem[]; source: TargetSource; mappings: Mappings };
@@ -109,8 +110,7 @@ async function writeColumn(f: FileRef, source: TargetSource, col: string, items:
 /** Inventur abschließen: leere Ist-Felder auf 0 (→ nachbestellen), Datum und Prüfer eintragen. */
 export async function finishInventory(f: FileRef, source: TargetSource, items: TargetItem[], checker: string) {
   await writeColumn(f, source, source.istCol!, items, (cur) => (cur === '' || cur === null ? 0 : cur));
-  const date = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
-  if (source.dateCell) await writeRange(f, source.sheetName, source.dateCell, [[date]]);
+  if (source.dateCell) await writeRange(f, source.sheetName, source.dateCell, [[excelToday()]]);
   if (source.checkerCell && checker) await writeRange(f, source.sheetName, source.checkerCell, [[checker]]);
 }
 

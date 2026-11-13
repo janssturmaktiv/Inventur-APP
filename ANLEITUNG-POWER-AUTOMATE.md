@@ -68,8 +68,16 @@ Alle Artikel ohne Ist-Wert werden auf 0 gesetzt (→ „nachbestellen“), dazu 
 Für eine **neue Inventur** in Excel die Spalten „Ist“ und „Chargen-Nr.“ leeren (bzw. wie bisher eine frische
 Kopie der Liste anlegen).
 
+## Empfehlung: Spalte „GTIN“ in der Liste
+
+Füge in der Bestandsliste (Blatt „Inventur“) rechts neben „Bemerkung“ eine Spalte mit der Überschrift **GTIN** hinzu.
+Das Skript trägt dort beim ersten Scan eines Artikels automatisch die GTIN aus dem QR-Code ein. Wer danach die
+Liste in die App lädt, bekommt alle bereits bekannten Codes mit, und die App ordnet sie ohne Nachfrage zu.
+
+Nach dem Hinzufügen der Spalte das Skript in Excel einmal neu einfügen (Schritt 1), damit die neueste Version läuft.
+
 ## Gut zu wissen
 
 - Die App findet die Zeile über **Artikel-Nr. + Seite + Größe**. Diese drei Spalten in der Liste bitte nicht umbenennen.
-- Gelernte Zuordnungen (welcher QR-Code zu welcher Zeile gehört) speichert jedes Handy für sich.
+- Gelernte Zuordnungen speichert jedes Handy für sich. Mit der Spalte „GTIN“ (siehe oben) werden sie über die Liste an alle verteilt.
 - Jede E-Mail zählt die Menge **dazu**. Eine Mail doppelt zu senden zählt also doppelt.

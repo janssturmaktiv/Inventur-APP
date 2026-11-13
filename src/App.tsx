@@ -284,6 +284,7 @@ export default function App() {
       if (!confirm(msg)) return;
       setOriginal(isXlsx ? b64 : '');
       setTargets(parsed.items);
+      { const keys = new Set(parsed.items.map((i) => i.key)); setMappings((m) => Object.fromEntries(Object.entries(m).filter(([, k]) => keys.has(k)))); }
       setSource(isXlsx ? s : { ...s, istCol: undefined, batchCol: undefined });
       setSettings((st) => ({ ...st, listName: file.name.replace(/\.(xlsx|xls|csv)$/i, '') }));
       setTab('abgleich');

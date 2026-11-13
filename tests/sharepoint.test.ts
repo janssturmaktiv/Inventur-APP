@@ -86,7 +86,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const istVals = st.items.map((i) => cells.Bestand[`F${i.row}`]);
   checks.push(['Abschluss: leere auf 0, gezählte bleiben', istVals.filter((v) => v === 0).length === 10 && cells.Bestand[`F${m.row}`] === 2]);
   checks.push(['Gruppenzeilen unberührt', cells.Bestand.F15 === '' || cells.Bestand.F15 === undefined]);
-  checks.push(['Datum und Prüfer', /\d\d\.\d\d\.\d{4}/.test(String(cells.Bestand.B4)) && cells.Bestand.G4 === 'Phillip']);
+  checks.push(['Datum und Prüfer', Number(cells.Bestand.B4) > 46000 && cells.Bestand.G4 === 'Phillip']);
   await resetInventory(f, st.source, st.items);
   checks.push(['Neue Inventur leert', st.items.every((i) => cells.Bestand[`F${i.row}`] === '' && cells.Bestand[`I${i.row}`] === '')]);
   let fail = 0;

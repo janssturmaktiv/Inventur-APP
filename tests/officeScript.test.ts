@@ -48,7 +48,7 @@ const workbook = { getWorksheets: () => [ws] };
   const r2 = main(workbook, 'xx ###INVENTUR-V1###\nF;Phillip\n###ENDE###');
   checks.push(['Abschluss setzt leere auf 0', v('F11') === 0 && v('F23') === 2 && r2.includes('abgeschlossen')]);
   checks.push(['Gruppenzeile unverändert', (v('F9') ?? '') === '']);
-  checks.push(['Datum und Prüfer', /\d\d\.\d\d\.\d{4}/.test(String(v('B4'))) && v('G4') === 'Phillip']);
+  checks.push(['Datum und Prüfer', Number(v('B4')) > 46000 && v('G4') === 'Phillip']);
   checks.push(['Ohne Daten', main(workbook, 'Hallo').startsWith('Keine Inventur-Daten')]);
   let fail = 0;
   for (const [n, ok] of checks) {

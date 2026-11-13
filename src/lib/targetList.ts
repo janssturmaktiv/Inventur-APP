@@ -19,17 +19,30 @@ export type ParsedTargets = { items: TargetItem[]; source: TargetSource };
 
 export function parseTargetWorkbook(base64: string, fileName: string): ParsedTargets {
   const wb = XLSX.read(base64, { type: 'base64' });
-  // Erstes Blatt mit erkennbarer Kopfzeile nehmen
+  // Alle Blätter prüfen und das beste nehmen: eines mit Spalte „Ist“ (Erfassungsblatt) vor reinen Übersichten,
+  // danach das mit den meisten Artikelzeilen.
+  let best: (ParsedTargets & { score: number }) | null = null;
   for (const sheetName of wb.SheetNames) {
+    const r = parseSheet(wb, sheetName, fileName);
+    if (!r) continue;
+    const score = (r.source.istCol ? 100000 : 0) + (r.items.some((i) => i.side || i.size) ? 10000 : 0) + r.items.length;
+    if (!best || score > best.score) best = { ...r, score };
+  }
+  if (best) return { items: best.items, source: best.source };
+  throw new Error('Keine passende Liste gefunden. Erwartet wird eine Kopfzeile mit „Artikel-Nr.“ und „Artikelbezeichnung“ (optional Seite, Größe, Soll, Ist, Chargen-Nr.).');
+}
+
+function parseSheet(wb: XLSX.WorkBook, sheetName: string, fileName: string): ParsedTargets | null {
+  {
     const sheet = wb.Sheets[sheetName];
     const ref = sheet['!ref'];
-    if (!ref) continue;
+    if (!ref) return null;
     const startRow = XLSX.utils.decode_range(ref).s.r; // 0-basiert
     const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, defval: '', blankrows: true });
     const cell = (r: unknown[], i?: number) => (i === undefined ? '' : String(r[i] ?? '').trim());
 
     const headerIdx = rows.findIndex((r) => r.some((c) => COLS.articleNo.test(String(c).trim())) && r.some((c) => COLS.name.test(String(c).trim())));
-    if (headerIdx === -1) continue;
+    if (headerIdx === -1) return null;
     const header = rows[headerIdx].map((c) => String(c).trim());
     const idx: Partial<Record<ColKey, number>> = {};
     (Object.keys(COLS) as ColKey[]).forEach((k) => {
@@ -63,7 +76,7 @@ export function parseTargetWorkbook(base64: string, fileName: string): ParsedTar
         currentBatch: cell(r, idx.batchOut) || undefined,
       });
     });
-    if (!items.length) continue;
+    if (!items.length) return null;
 
     // Felder „Inventurdatum“ und „Geprüft von“ oberhalb der Kopfzeile suchen (Wert = nächste befüllte/gelbe Zelle rechts)
     const findLabelCell = (re: RegExp) => {
@@ -93,5 +106,4 @@ export function parseTargetWorkbook(base64: string, fileName: string): ParsedTar
       },
     };
   }
-  throw new Error('Keine passende Liste gefunden. Erwartet wird eine Kopfzeile mit „Artikel-Nr.“ und „Artikelbezeichnung“ (optional Seite, Größe, Soll, Ist, Chargen-Nr.).');
 }

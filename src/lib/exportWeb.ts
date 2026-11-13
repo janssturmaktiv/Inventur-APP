@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import type { Reconciliation } from './reconcile';
 import type { Scan, TargetSource } from './types';
 import { writeCells, type CellUpdate } from './xlsxWriteback';
+import { excelToday } from './excelDate';
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const de = (iso: string) => new Date(iso).toLocaleString('de-DE');
@@ -50,7 +51,7 @@ export async function buildFilledOriginal(originalBase64: string, source: Target
     if (source.istCol) updates.push({ ref: `${source.istCol}${row.item.row}`, value: row.foundQty });
     if (source.batchCol) updates.push({ ref: `${source.batchCol}${row.item.row}`, value: uniq(row.scans.map((s) => s.batch)) || null });
   }
-  if (source.dateCell) updates.push({ ref: source.dateCell, value: new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) });
+  if (source.dateCell) updates.push({ ref: source.dateCell, value: excelToday() });
   if (source.checkerCell && checker) updates.push({ ref: source.checkerCell, value: checker });
   const b64 = await writeCells(originalBase64, source.sheetName, updates);
   const base = source.fileName.replace(/\.xlsx$/i, '');
