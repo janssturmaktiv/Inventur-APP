@@ -1,7 +1,7 @@
 // Feste Zuordnung GTIN (UDI-DI) -> Zeile der Bestandsliste ("Artikel-Nr.|SEITE|GRÖSSE").
 // Gilt auf allen Geräten, niemand muss diese Produkte selbst zuordnen.
 // GTIN ohne führende Nullen (wie normId), Schlüssel in Großbuchstaben.
-// Quelle: Liste von Phillip (vitego-shop), 2026-11-13.
+// Quelle: Liste von Phillip (vitego-shop) + 07720 Gr. 7–9 aus Scans, 2026-11-13.
 export const GTIN_ZUORDNUNG: Record<string, string> = {
   '4029925258897': '07382|LINKS|2',
   '4029925258903': '07382|LINKS|3',
@@ -63,4 +63,10 @@ export const GTIN_ZUORDNUNG: Record<string, string> = {
   '4029925001639': '07720|RECHTS|4',
   '4029925001646': '07720|RECHTS|5',
   '4029925001653': '07720|RECHTS|6',
+  '4029925259054': '07720|LINKS|7',
+  '4029925259061': '07720|LINKS|8',
+  '4029925259078': '07720|LINKS|9',
+  '4029925259085': '07720|RECHTS|7',
+  '4029925259092': '07720|RECHTS|8',
+  '4029925259108': '07720|RECHTS|9',
 };
