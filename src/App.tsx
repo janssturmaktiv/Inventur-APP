@@ -9,6 +9,8 @@ import { parseTargetWorkbook } from './lib/targetList';
 import { reconcile, findTarget, type ReconRow, type Reconciliation, type Status } from './lib/reconcile';
 import { buildFilledOriginal, buildReport, canShareFile, downloadFile, printReport, shareFile, type ExportFile } from './lib/exportWeb';
 import { load, usePersisted } from './lib/storage';
+import { GTIN_ZUORDNUNG } from './data/gtinZuordnung';
+import * as XLSX from 'xlsx';
 import { buildMailBatches, mailtoUrl, type MailBatch } from './lib/mailSync';
 import { itemLabel, type Mappings, type Scan, type TargetItem, type TargetSource } from './lib/types';
 
@@ -48,7 +50,9 @@ export default function App() {
   const [targets, setTargets] = usePersisted<TargetItem[]>(KEYS.targets, []);
   const [source, setSource] = usePersisted<TargetSource | null>(KEYS.source, null);
   const [original, setOriginal] = usePersisted<string>(KEYS.original, '');
-  const [mappings, setMappings] = usePersisted<Mappings>(KEYS.mappings, {});
+  const [learnedMappings, setMappings] = usePersisted<Mappings>(KEYS.mappings, {});
+  // feste Zuordnungen (für alle) + auf diesem Gerät gelernte
+  const mappings = useMemo<Mappings>(() => ({ ...GTIN_ZUORDNUNG, ...learnedMappings }), [learnedMappings]);
   const [settings, setSettings] = usePersisted<Settings>(KEYS.settings, { userName: '', listName: '' });
   const [tab, setTab] = useState<'abgleich' | 'scans'>('abgleich');
   const [filter, setFilter] = useState<Filter>('alle');
@@ -377,6 +381,32 @@ export default function App() {
     }
   }
 
+  // GTIN je Zeile: aus der Liste (Spalte GTIN) oder aus den Zuordnungen
+  const gtinByKey = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const [g, k] of Object.entries(mappings)) m[k] ??= g;
+    for (const t of targets) if (t.udiDi) m[t.key] = normId(t.udiDi);
+    return m;
+  }, [mappings, targets]);
+  const mappedCount = targets.filter((t) => gtinByKey[t.key]).length;
+
+  function exportMappings() {
+    const rows = targets.map((t) => ({
+      'Artikel-Nr.': t.articleNo,
+      Artikelbezeichnung: t.name,
+      Seite: t.side ?? '',
+      Größe: t.size ?? '',
+      GTIN: gtinByKey[t.key] ? gtinByKey[t.key].padStart(14, '0') : '',
+    }));
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [12, 34, 8, 7, 18].map((wch) => ({ wch }));
+    XLSX.utils.book_append_sheet(wb, ws, 'Zuordnungen');
+    const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    setShowSettings(false);
+    setReady({ blob: new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), name: `GTIN-Zuordnungen ${new Date().toISOString().slice(0, 10)}.xlsx` });
+  }
+
   const draftTarget = draft && targets.length ? findTarget(targets, draft, mappings) : undefined;
   const duplicate = draft?.serial ? scans.find((s) => s.serial === draft.serial && normId(s.udiDi) === normId(draft.udiDi)) : undefined;
   const rows = recon.rows.filter((r) => filter === 'alle' || r.status === filter);
@@ -500,8 +530,13 @@ export default function App() {
                   : 'Importiere zuerst die Soll-Liste: Excel-Datei mit Artikel-Nr., Artikelbezeichnung, Seite, Größe, Soll, Ist und Chargen-Nr.'}
               </p>
             )}
-            {rows.map((r) => (
-              <ReconItem key={r.item.id} row={r} shared={shared} />
+            {rows.map((r, i) => (
+              <div key={r.item.id}>
+                {(i === 0 || groupKey(rows[i - 1].item) !== groupKey(r.item)) && (
+                  <h3 className="group">{[r.item.articleNo, r.item.name, r.item.side && r.item.side[0].toUpperCase() + r.item.side.slice(1)].filter(Boolean).join('  ·  ')}</h3>
+                )}
+                <ReconItem row={r} shared={shared} />
+              </div>
             ))}
           </>
         )}
@@ -702,6 +737,11 @@ export default function App() {
                 </button>
               </div>
             )}
+            {targets.length > 0 && (
+              <button className="textbtn" onClick={exportMappings}>
+                Zuordnungen als Liste exportieren ({mappedCount} von {targets.length} Zeilen bekannt)
+              </button>
+            )}
             <button className="danger" onClick={() => clear('scans')}>
               {shared ? 'Scan-Verlauf auf diesem Gerät löschen' : 'Alle Scans löschen'}
             </button>
@@ -711,7 +751,7 @@ export default function App() {
               </button>
             )}
             <button className="danger" onClick={() => clear('mappings')}>
-              Gelernte Zuordnungen auf diesem Gerät löschen ({Object.keys(mappings).length})
+              Gelernte Zuordnungen auf diesem Gerät löschen ({Object.keys(learnedMappings).length})
             </button>
             <p className="meta">
               {shared
@@ -775,6 +815,8 @@ export default function App() {
   );
 }
 
+const groupKey = (t: TargetItem) => `${t.articleNo}|${t.name}|${t.side ?? ''}`;
+
 function TargetPicker({ targets, onClose, onPick }: { targets: TargetItem[]; onClose: () => void; onPick: (t: TargetItem) => void }) {
   const [q, setQ] = useState('');
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
@@ -816,11 +858,10 @@ function ReconItem({ row, shared }: { row: ReconRow; shared?: boolean }) {
   return (
     <div className={`row st-${row.status}`}>
       <div className="grow">
-        <div className="row-title">{row.item.name || row.item.articleNo}</div>
+        <div className="row-title">{row.item.size ? `Größe ${row.item.size}` : row.item.name || row.item.articleNo}</div>
         <div className="meta">
-          Art.-Nr. {row.item.articleNo || '–'}
+          {row.item.size ? `${row.item.name} · ` : ''}Art.-Nr. {row.item.articleNo || '–'}
           {row.item.side ? ` · ${row.item.side}` : ''}
-          {row.item.size ? ` · Gr. ${row.item.size}` : ''}
           {row.item.batch ? ` · Charge soll ${row.item.batch}` : ''}
         </div>
         {batches && <div className="meta">Charge: {batches}</div>}
