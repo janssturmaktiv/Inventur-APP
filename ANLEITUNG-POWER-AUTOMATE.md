@@ -27,7 +27,8 @@ Power Automate trägt Ist und Chargen-Nr. nach ca. 1 Minute in die Liste ein.
    - Name: `Inventur-Scans eintragen`
    - Auslöser suchen: **„Wenn eine neue E-Mail eingeht (V3)“** (Office 365 Outlook) → **Erstellen**.
 3. Im Auslöser:
-   - Ordner: **Inbox / Posteingang**
+   - Ordner: rechts im Feld auf das **Ordner-Symbol** klicken und **Posteingang** auswählen (nicht eintippen,
+     sonst meldet der Flow-Checker „Der angegebene Ordner ist nicht vorhanden“)
    - Unter „Erweiterte Parameter“ bei **Betrefffilter**: `INVENTUR-SCANS`
 4. **+ Neuer Schritt / Aktion hinzufügen** → suchen: **„Skript ausführen“** (Excel Online (Business)).
    - Speicherort: **SharePoint-Website „TeamOT“**
