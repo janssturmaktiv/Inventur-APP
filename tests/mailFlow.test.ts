@@ -17,7 +17,7 @@ for (let i = 0; i < 120; i++) {
 }
 scans.push({ id: 'x', batch: 'NOPE', quantity: 1, raw: '', codeType: 'qr', scannedAt: '', udiDi: '0999' }); // nicht zugeordnet
 const mappings = { '4049999123457': '07853|RECHTS|M', '4049999000001': '07780|RECHTS|XS' };
-const batches = buildMailBatches(scans, items, mappings, 'Phillip; Test', true);
+const batches = buildMailBatches(scans, items, mappings, 'Phillip; Test', true, { date: '2026-11-16' });
 const one60 = buildMailBatches(scans.slice(0, 60).map((x) => ({ ...x, batch: '797923', udiDi: '04029925258897' })), STANDARD_LISTE, {}, 'Phillip', true);
 
 const src = readFileSync(new URL('../office-script/inventur-scans-eintragen.ts', import.meta.url), 'utf8');
@@ -30,7 +30,7 @@ grid.forEach((r, i) => r.forEach((v, j) => (values[`${i},${j}`] = v)));
 const ws = {
   getName: () => 'Bestand',
   getUsedRange: () => ({ getTexts: () => grid.map((r, i) => Array.from({ length: width }, (_, j) => String(values[`${i},${j}`] ?? ''))), getRowIndex: () => 0, getColumnIndex: () => 0 }),
-  getCell: (r: number, c: number) => ({ getValue: () => values[`${r},${c}`] ?? '', setValue: (v: unknown) => (values[`${r},${c}`] = v) }),
+  getCell: (r: number, c: number) => ({ getValue: () => values[`${r},${c}`] ?? '', setValue: (v: unknown) => (values[`${r},${c}`] = v), getFormula: () => String(values[`${r},${c}`] ?? ''), getMergedAreasOrNullObject: () => undefined }),
 };
 
 (async () => {

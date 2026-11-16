@@ -14,7 +14,25 @@ export type MailBatch = { subject: string; body: string; scanIds: string[] };
 
 const clean = (s: string) => s.replace(/[;\r\n]/g, ',').trim();
 
-export function buildMailBatches(scans: Scan[], targets: TargetItem[], mappings: Mappings, sender: string, finish = false): MailBatch[] {
+/** Lokales Datum JJJJ-MM-TT */
+export function localDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Inventurtag = Tag des ältesten Scans auf dem Gerät (bleibt gleich, auch wenn die Inventur über Mitternacht geht). */
+export function inventoryDate(allScans: Scan[], now = new Date()): string {
+  const times = allScans.map((s) => Date.parse(s.scannedAt)).filter((t) => !Number.isNaN(t));
+  return localDate(times.length ? new Date(Math.min(...times)) : now);
+}
+
+export type MailOptions = {
+  /** Inventurtag (JJJJ-MM-TT); weicht er vom Datum in der Liste ab, leert das Skript zuerst Ist und Chargen */
+  date?: string;
+  /** Liste neu befüllen: Ist und Chargen vorher leeren (bei „Alle Scans erneut senden“) */
+  reset?: boolean;
+};
+
+export function buildMailBatches(scans: Scan[], targets: TargetItem[], mappings: Mappings, sender: string, finish = false, opts: MailOptions = {}): MailBatch[] {
   const lines: { line: string; id: string }[] = [];
   for (const s of [...scans].reverse()) {
     const t = findTarget(targets, s, mappings);
@@ -23,17 +41,17 @@ export function buildMailBatches(scans: Scan[], targets: TargetItem[], mappings:
     const gtin = s.udiDi && !GTIN_ZUORDNUNG[normId(s.udiDi)] ? `;${clean(s.udiDi)}` : '';
     lines.push({ line: `A;${clean(t.key)};${s.quantity};${clean(s.batch)}${gtin}`, id: s.id });
   }
-  const head = `Bitte nicht ändern.\n###INVENTUR-V1###\nS;${clean(sender || 'unbekannt')}\n`;
+  const head = `Bitte nicht ändern.\n###INVENTUR-V1###\nS;${clean(sender || 'unbekannt')}\n${opts.date ? `D;${opts.date}\n` : ''}`;
   const tail = '###ENDE###\n';
   const batches: MailBatch[] = [];
   let cur: { line: string; id: string }[] = [];
   const flush = (withFinish: boolean) => {
-    const body = head + cur.map((l) => l.line + '\n').join('') + (withFinish ? `F;${clean(sender || '–')}\n` : '') + tail;
+    const body = head + (opts.reset && batches.length === 0 ? 'N\n' : '') + cur.map((l) => l.line + '\n').join('') + (withFinish ? `F;${clean(sender || '–')}\n` : '') + tail;
     batches.push({ subject: MAIL_SUBJECT, body, scanIds: cur.map((l) => l.id) });
     cur = [];
   };
   for (const l of lines) {
-    const size = enc(head) + enc(tail) + cur.reduce((n, x) => n + enc(x.line + '\n'), 0) + enc(l.line + '\n') + 20;
+    const size = enc(head) + 3 + enc(tail) + cur.reduce((n, x) => n + enc(x.line + '\n'), 0) + enc(l.line + '\n') + 20;
     if (cur.length && size > MAX_ENCODED) flush(false);
     cur.push(l);
   }

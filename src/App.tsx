@@ -12,7 +12,7 @@ import { load, usePersisted } from './lib/storage';
 import { GTIN_ZUORDNUNG } from './data/gtinZuordnung';
 import { STANDARD_LISTE, STANDARD_LISTE_NAME } from './data/standardListe';
 import * as XLSX from 'xlsx';
-import { buildMailBatches, mailtoUrl, type MailBatch } from './lib/mailSync';
+import { buildMailBatches, inventoryDate, mailtoUrl, type MailBatch } from './lib/mailSync';
 import { itemLabel, type Mappings, type Scan, type TargetItem, type TargetSource } from './lib/types';
 
 const KEYS = {
@@ -175,14 +175,16 @@ export default function App() {
 
   const unsent = mailMode ? scans.filter((x) => x.sync !== 'mailed' && targets.length && findTarget(targets, x, mappings)) : [];
 
-  function prepareMail(finish = false) {
+  function prepareMail(finish = false, resend = false) {
     setExportMenu(false);
     if (!settings.mailTo) {
       setShowSettings(true);
       return alert('Bitte zuerst in den Einstellungen die E-Mail-Adresse für die gemeinsame Liste eintragen.');
     }
     if (finish && !confirm('Inventur abschließen?\n\nIn der gemeinsamen Liste werden alle Artikel ohne Ist-Wert auf 0 gesetzt (→ nachbestellen), dazu Datum und „Geprüft von“.')) return;
-    const b = buildMailBatches(unsent, targets, mappings, settings.userName, finish);
+    if (resend && !confirm('Alle Scans erneut senden?\n\nIn der gemeinsamen Liste werden Ist und Chargen-Nr. zuerst komplett geleert und dann mit allen Scans dieses Handys neu befüllt. Nur nutzen, wenn du allein inventurst oder die Liste falsch ist.')) return;
+    const list = resend ? scans.filter((x) => findTarget(targets, x, mappings)) : unsent;
+    const b = buildMailBatches(list, targets, mappings, settings.userName, finish, { date: inventoryDate(scans), reset: resend });
     if (!b.length) return alert('Keine neuen Scans zum Senden.');
     setMailBatches(b);
   }
@@ -660,7 +662,11 @@ export default function App() {
                 </button>
                 <button className="menu-item" onClick={() => prepareMail(true)}>
                   <b>Inventur abschließen</b>
-                  <span>Restliche Scans senden, in der gemeinsamen Liste fehlende Artikel auf 0 setzen, Datum und Prüfer eintragen</span>
+                  <span>Restliche Scans senden, in der gemeinsamen Liste fehlende Artikel auf 0 setzen</span>
+                </button>
+                <button className="menu-item" onClick={() => prepareMail(false, true)}>
+                  <b>Alle Scans erneut senden</b>
+                  <span>Liste leeren und mit allen {scans.length} Scans dieses Handys neu befüllen</span>
                 </button>
               </>
             )}

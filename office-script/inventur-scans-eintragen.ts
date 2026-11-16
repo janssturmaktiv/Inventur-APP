@@ -3,8 +3,9 @@
  *
  * Wird von Power Automate mit dem Text einer E-Mail aus der Konsilager-App aufgerufen.
  * Erhöht in der Bestandsliste die Spalte „Ist“ und ergänzt „Chargen-Nr.“ in der passenden Zeile
- * (Artikel-Nr. + Seite + Größe). Optional: Inventur abschließen (leere Ist-Felder auf 0,
- * Inventurdatum und „Geprüft von“ eintragen).
+ * (Artikel-Nr. + Seite + Größe). Bei einer neuen Inventur (anderes Datum als in der Liste) werden
+ * vorher Ist und Chargen-Nr. geleert. Inventurdatum und „Geprüft von“ werden immer eingetragen.
+ * Optional: Inventur abschließen (leere Ist-Felder auf 0).
  */
 function main(workbook: ExcelScript.Workbook, mailBody: string): string {
   // --- E-Mail-Text auswerten (HTML entfernen, Daten zwischen den Markierungen) ---
@@ -78,6 +79,93 @@ function main(workbook: ExcelScript.Workbook, mailBody: string): string {
   const istCol = colOffset + col.ist;
   const batchCol = col.batch >= 0 ? colOffset + col.batch : -1;
   const gtinCol = col.gtin >= 0 ? colOffset + col.gtin : -1;
+
+  // --- Felder „Inventurdatum“ und „Geprüft von“ oberhalb der Kopfzeile finden ---
+  // Wertzelle = direkt rechts neben der Beschriftung. Ist die leer und nicht verbunden, wird die
+  // nächste verbundene Zelle (z. B. G4:H4) bzw. die nächste Zelle mit festem Wert genommen.
+  // Zellen mit Formeln werden nie überschrieben.
+  const valueCellRight = (r: number, c: number): ExcelScript.Range | undefined => {
+    let fallback: ExcelScript.Range | undefined;
+    for (let k = c + 1; k <= c + 3; k++) {
+      const x = ws.getCell(rowOffset + r, colOffset + k);
+      const isFormula = String(x.getFormula() || '').startsWith('=');
+      if (isFormula) continue;
+      const merged = x.getMergedAreasOrNullObject();
+      const isMergeStart = !!merged && merged.getAreas().length > 0 && merged.getAreas()[0].getColumnIndex() === colOffset + k;
+      const isMergeInner = !!merged && merged.getAreas().length > 0 && !isMergeStart;
+      if (isMergeInner) continue;
+      if (k === c + 1 && (isMergeStart || String(texts[r][k] ?? '').trim() !== '')) return x;
+      if (k === c + 1) {
+        fallback = x;
+        continue;
+      }
+      if (isMergeStart || String(texts[r][k] ?? '').trim() !== '') return x;
+    }
+    return fallback;
+  };
+  let dateCell: ExcelScript.Range | undefined;
+  let checkerCell: ExcelScript.Range | undefined;
+  for (let r = 0; r < headerRow; r++) {
+    for (let c = 0; c < texts[r].length; c++) {
+      const label = norm(texts[r][c]);
+      if (!dateCell && /^inventurdatum/.test(label)) dateCell = valueCellRight(r, c);
+      if (!checkerCell && /^gepr(ü|ue)ft von/.test(label)) checkerCell = valueCellRight(r, c);
+    }
+  }
+  const serial = (y: number, m: number, d: number) => Math.round((Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000);
+  const now = new Date();
+  const today = serial(now.getFullYear(), now.getMonth() + 1, now.getDate());
+
+  // --- Kopfdaten der E-Mail ---
+  let sender = '';
+  let inventoryDate = 0; // Excel-Seriennummer des Inventurtags laut App
+  let forceReset = false;
+  for (const line of lines) {
+    const p = line.split(';');
+    if (p[0] === 'S') sender = (p[1] || '').trim();
+    if (p[0] === 'N') forceReset = true;
+    if (p[0] === 'D') {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((p[1] || '').trim());
+      if (m) inventoryDate = serial(Number(m[1]), Number(m[2]), Number(m[3]));
+    }
+  }
+
+  // --- Neue Inventur? Dann zuerst alte Ist-Werte und Chargen leeren ---
+  // Neu ist die Inventur, wenn das Inventurdatum der App nicht dem Datum in der Liste entspricht
+  // (oder die App ausdrücklich „neu befüllen“ verlangt). So werden alte Zahlen nie dazugezählt.
+  const listDate = dateCell ? Math.floor(Number(dateCell.getValue()) || 0) : 0;
+  if (!forceReset && inventoryDate && listDate && inventoryDate < listDate) {
+    // Scans einer älteren Inventur (z. B. vergessen auf einem Handy) nicht in die aktuelle mischen
+    return `Nicht eingetragen: Die Scans gehören zu einer älteren Inventur als die in der Liste.`;
+  }
+  let reset = false;
+  if (forceReset || (inventoryDate && listDate !== inventoryDate)) {
+    for (const r of itemRows) {
+      ws.getCell(r, istCol).setValue('');
+      if (batchCol >= 0) ws.getCell(r, batchCol).setValue('');
+    }
+    if (checkerCell) checkerCell.setValue('');
+    reset = true;
+  }
+  if (dateCell && (reset || !listDate)) dateCell.setValue(inventoryDate || today);
+  // Prüfer: alle Namen, die zu dieser Inventur gescannt haben
+  const addChecker = (name: string) => {
+    if (!checkerCell || !name || name === 'unbekannt' || name === '–') return;
+    const names = String(checkerCell.getValue() || '')
+      .split(',')
+      .map((x) => x.trim())
+      .filter((x) => x.length > 0);
+    let changed = false;
+    for (const part of name.split(',').map((x) => x.trim()).filter((x) => x.length > 0)) {
+      if (names.indexOf(part) < 0) {
+        names.push(part);
+        changed = true;
+      }
+    }
+    if (changed) checkerCell.setValue(names.join(', '));
+  };
+  addChecker(sender);
+
   let learned = 0;
   let added = 0;
   const missing: string[] = [];
@@ -123,34 +211,17 @@ function main(workbook: ExcelScript.Workbook, mailBody: string): string {
   }
 
   if (finishedBy) {
+    // Nicht gefundene Artikel auf 0 setzen (→ „nachbestellen“)
     for (const r of itemRows) {
       const c = ws.getCell(r, istCol);
       if (String(c.getValue()) === '') c.setValue(0);
     }
-    // Inventurdatum und „Geprüft von“ oberhalb der Kopfzeile: Wert steht rechts neben der Beschriftung
-    const now = new Date();
-    // Excel-Seriennummer, damit die Zelle ein echtes Datum bleibt
-    const date = Math.round((Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) - Date.UTC(1899, 11, 30)) / 86400000);
-    for (let r = 0; r < headerRow; r++) {
-      for (let c = 0; c < texts[r].length; c++) {
-        const label = norm(texts[r][c]);
-        const setRight = (value: string | number) => {
-          let target = c + 1;
-          for (let k = c + 1; k < Math.min(texts[r].length, c + 4); k++) {
-            if (String(texts[r][k]).trim()) {
-              target = k;
-              break;
-            }
-          }
-          ws.getCell(rowOffset + r, colOffset + target).setValue(value);
-        };
-        if (/^inventurdatum/.test(label)) setRight(date);
-        if (/^gepr(ü|ue)ft von/.test(label) && finishedBy !== '–') setRight(finishedBy);
-      }
-    }
+    if (dateCell && !Number(dateCell.getValue())) dateCell.setValue(inventoryDate || today);
+    addChecker(finishedBy);
   }
 
   let msg = `${added} Stück eingetragen.`;
+  if (reset) msg = 'Neue Inventur: alte Ist-Werte und Chargen geleert. ' + msg;
   if (learned) msg += ` ${learned} GTIN(s) in der Liste ergänzt.`;
   if (missing.length) msg += ` Nicht gefunden: ${missing.join(', ')}.`;
   if (finishedBy) msg += ' Inventur abgeschlossen.';

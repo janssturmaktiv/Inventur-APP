@@ -61,13 +61,23 @@ https://janssturmaktiv.github.io/Inventur-APP/?an=DEINE-ADRESSE@firma.de
 3. Nach ca. 1 Minute in der Excel-Liste nachsehen. In Power Automate unter **Meine Flows → Ausführungsverlauf**
    steht bei jeder Ausführung, wie viele Stück eingetragen wurden (oder welche Zeile nicht gefunden wurde).
 
+## Neue Inventur
+
+Die App schickt bei jeder Mail das Inventurdatum mit (Tag des ersten Scans auf dem Handy). Weicht es vom
+**Inventurdatum in B4** ab, leert das Skript zuerst alle Ist-Werte und Chargen-Nr. und trägt dann die Scans ein.
+Alte Zahlen werden also nie dazugezählt. B4 (Datum) und „Geprüft von“ (G4) werden dabei sofort ausgefüllt,
+mehrere Kollegen erscheinen dort nacheinander. Scans einer älteren Inventur werden abgelehnt.
+
+Ist die Liste einmal falsch: in der App **Export → Alle Scans erneut senden**. Dann wird die Liste geleert und mit
+allen Scans dieses Handys neu befüllt.
+
 ## Inventur abschließen
 
 In der App **Export → Inventur abschließen**. Die letzte E-Mail enthält dann zusätzlich den Abschluss:
 Alle Artikel ohne Ist-Wert werden auf 0 gesetzt (→ „nachbestellen“), dazu Inventurdatum und „Geprüft von“.
 
-Für eine **neue Inventur** in Excel die Spalten „Ist“ und „Chargen-Nr.“ leeren (bzw. wie bisher eine frische
-Kopie der Liste anlegen).
+Für eine **neue Inventur** muss in Excel nichts geleert werden (siehe oben). In der App vorher unter ⚙︎ die alten
+Scans löschen.
 
 ## Empfehlung: Spalte „GTIN“ in der Liste
 
