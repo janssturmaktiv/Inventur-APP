@@ -183,8 +183,15 @@ export default function App() {
     }
     if (finish && !confirm('Inventur abschließen?\n\nIn der gemeinsamen Liste werden alle Artikel ohne Ist-Wert auf 0 gesetzt (→ nachbestellen), dazu Datum und „Geprüft von“.')) return;
     if (resend && !confirm('Alle Scans erneut senden?\n\nIn der gemeinsamen Liste werden Ist und Chargen-Nr. zuerst komplett geleert und dann mit allen Scans dieses Handys neu befüllt. Nur nutzen, wenn du allein inventurst oder die Liste falsch ist.')) return;
+    // Ohne Namen kein „Geprüft von“: einmal nachfragen und in den Einstellungen speichern
+    let userName = settings.userName.trim();
+    if (!userName) {
+      userName = (prompt('Wie heißt du?\n\nDein Name wird in der Liste bei „Geprüft von“ eingetragen und in den Einstellungen gespeichert.') ?? '').trim();
+      if (!userName) return;
+      setSettings((s) => ({ ...s, userName }));
+    }
     const list = resend ? scans.filter((x) => findTarget(targets, x, mappings)) : unsent;
-    const b = buildMailBatches(list, targets, mappings, settings.userName, finish, { date: inventoryDate(scans), reset: resend });
+    const b = buildMailBatches(list, targets, mappings, userName, finish, { date: inventoryDate(scans), reset: resend });
     if (!b.length) return alert('Keine neuen Scans zum Senden.');
     // Nur eine Mail: Mail-App direkt öffnen, ohne Zwischenschritt
     if (b.length === 1) return openMail(b[0]);
