@@ -1,4 +1,5 @@
 // Ende-zu-Ende ohne Netz: App erzeugt E-Mail-Text -> Office Script trägt ihn in die Liste ein.
+import { STANDARD_LISTE } from '../src/data/standardListe';
 import { readFileSync, writeFileSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -17,6 +18,7 @@ for (let i = 0; i < 120; i++) {
 scans.push({ id: 'x', batch: 'NOPE', quantity: 1, raw: '', codeType: 'qr', scannedAt: '', udiDi: '0999' }); // nicht zugeordnet
 const mappings = { '4049999123457': '07853|RECHTS|M', '4049999000001': '07780|RECHTS|XS' };
 const batches = buildMailBatches(scans, items, mappings, 'Phillip; Test', true);
+const one60 = buildMailBatches(scans.slice(0, 60).map((x) => ({ ...x, batch: '797923', udiDi: '04029925258897' })), STANDARD_LISTE, {}, 'Phillip', true);
 
 const src = readFileSync(new URL('../office-script/inventur-scans-eintragen.ts', import.meta.url), 'utf8');
 const dir = mkdtempSync(join(tmpdir(), 'osk-'));
@@ -37,7 +39,8 @@ const ws = {
   for (const b of batches) main({ getWorksheets: () => [ws] }, '<div>' + b.body.replace(/&/g, '&amp;').replace(/\n/g, '<br>') + '</div>');
   const v = (ref: string) => { const c = XLSX.utils.decode_cell(ref); return values[`${c.r},${c.c}`]; };
   const checks: [string, boolean][] = [
-    ['mehrere E-Mails', batches.length > 1 && batches.every((b) => b.body.length < 1700)],
+    ['mehrere E-Mails', batches.length > 1 && batches.every((b) => encodeURIComponent(b.body).length <= 4000)],
+    ['60 Scans in einer E-Mail', one60.length === 1],
     ['Betreff nummeriert', batches[0].subject === `INVENTUR-SCANS (1/${batches.length})`],
     ['alle zugeordneten Scans enthalten', batches.reduce((n, b) => n + b.scanIds.length, 0) === 120],
     ['mailto-Link', mailtoUrl('a@b.de', batches[0]).startsWith('mailto:a%40b.de?subject=INVENTUR-SCANS')],
