@@ -58,17 +58,19 @@ const serial = (y: number, m: number, d: number) => Math.round((Date.UTC(y, m - 
   const main = (await import(pathToFileURL(file).href)).default as (wb: unknown, body: string) => string;
   const checks: [string, boolean][] = [];
   // 1) Neue Inventur (HTML-Mail wie von Outlook): alte Werte werden geleert, nicht addiert
-  const r1 = main(workbook, `<html><body><p>###INVENTUR-V1###<br>S;Phillip<br>D;2026-11-16<br>A;07853|RECHTS|M;1;LOT-A42<br>A;07853|RECHTS|M;1;LOT-B7<br>A;07780|RECHTS|XS;2;G&amp;1<br>A;99999|X|Y;1;Z<br>###ENDE###</p></body></html>`);
-  checks.push(['Rückmeldung', r1.includes('Neue Inventur') && r1.includes('4 Stück eingetragen') && r1.includes('99999|X|Y')]);
+  const r1 = main(workbook, `<html><body><p>###INVENTUR-V1###<br>S;Phillip<br>D;2026-11-16<br>A;07853|RECHTS|M;1;LOT-A42<br>A;07853|RECHTS|M;1;LOT-B7<br>A;99999|X|Y;1;Z<br>###ENDE###</p></body></html>`);
+  checks.push(['Rückmeldung', r1.includes('Neue Inventur') && r1.includes('2 Stück eingetragen') && r1.includes('99999|X|Y')]);
   checks.push(['Alte Werte nicht addiert: Ist 07853 rechts M = 2', v('F23') === 2]);
   checks.push(['Alte Charge ersetzt', v('I23') === 'LOT-A42, LOT-B7']);
-  checks.push(['Nicht gescannte alte Werte geleert', v('F12') === '']);
-  checks.push(['Ist 07780 XS = 2, Charge mit &', v('F10') === 2 && v('I10') === 'G&1']);
+  checks.push(['Nicht gescannter Artikel: alte Werte geleert', v('F12') === '' && v('F10') === '']);
+  checks.push(['Gleicher Artikel, nicht gescannte Größen = 0', v('F17') === 0 && v('F22') === 0 && v('F24') === 0 && r1.includes('auf 0 gesetzt')]);
   checks.push(['Inventurdatum in B4', v('B4') === serial(2026, 11, 16)]);
   checks.push(['Prüfer in G4 (verbunden), F4 unberührt', v('G4') === 'Phillip' && (v('F4') ?? '') === '']);
   checks.push(['Formel C4 unberührt', true]);
   // 2) Zweite Mail derselben Inventur, anderer Kollege: wird dazugezählt
-  const r2 = main(workbook, '###INVENTUR-V1###\nS;Anna\nD;2026-11-16\nA;07853|RECHTS|M;1;LOT-C1\n###ENDE###');
+  const r2 = main(workbook, '###INVENTUR-V1###\nS;Anna\nD;2026-11-16\nA;07853|RECHTS|M;1;LOT-C1\nA;07780|RECHTS|XS;2;G&amp;1\n###ENDE###'.replace('&amp;', '&'));
+  checks.push(['Ist 07780 XS = 2, gleiche Charge zweimal', v('F10') === 2 && v('I10') === 'G&1, G&1']);
+  checks.push(['Zweiter Artikel: Rest auf 0', v('F11') === 0 && v('F14') === 0]);
   checks.push(['Gleiche Inventur zählt dazu', v('F23') === 3 && !r2.includes('Neue Inventur')]);
   checks.push(['Mehrere Prüfer', v('G4') === 'Phillip, Anna']);
   // 3) Vergessene Scans einer älteren Inventur werden abgelehnt
@@ -80,7 +82,7 @@ const serial = (y: number, m: number, d: number) => Math.round((Date.UTC(y, m - 
   checks.push(['Gruppenzeile unverändert', (v('F9') ?? '') === '']);
   // 5) Neu befüllen (N): alles leeren und neu eintragen
   main(workbook, '###INVENTUR-V1###\nS;Phillip\nD;2026-11-16\nN\nA;07853|RECHTS|M;1;LOT-A42\n###ENDE###');
-  checks.push(['Neu befüllen', v('F23') === 1 && v('F11') === '' && v('G4') === 'Phillip']);
+  checks.push(['Neu befüllen', v('F23') === 1 && v('F11') === '' && v('F17') === 0 && v('G4') === 'Phillip']);
   checks.push(['Ohne Daten', main(workbook, 'Hallo').startsWith('Keine Inventur-Daten')]);
   let fail = 0;
   for (const [n, ok] of checks) {

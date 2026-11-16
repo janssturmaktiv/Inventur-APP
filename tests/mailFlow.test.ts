@@ -46,7 +46,7 @@ const ws = {
     ['mailto-Link', mailtoUrl('a@b.de', batches[0]).startsWith('mailto:a%40b.de?subject=INVENTUR-SCANS')],
     ['Ist 07853 rechts M = 60', v('F23') === 60],
     ['Ist 07780 XS = 60', v('F10') === 60],
-    ['7 Chargen gesammelt', String(v('I23')).split(', ').length === 7],
+    ['60 Chargen (je Stück), 7 verschiedene', String(v('I23')).split(', ').length === 60 && new Set(String(v('I23')).split(', ')).size === 7],
     ['Abschluss nur einmal, Rest auf 0', v('F11') === 0],
     ['Prüfer ohne Semikolon', v('G4') === 'Phillip, Test'],
   ];

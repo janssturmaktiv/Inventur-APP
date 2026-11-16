@@ -68,12 +68,14 @@ function main(workbook: ExcelScript.Workbook, mailBody: string): string {
   const cell = (r: number, c: number) => (c >= 0 ? String(texts[r][c] ?? '').trim() : '');
   const rows: { [key: string]: number } = {};
   const itemRows: number[] = [];
+  const itemArt: { [row: number]: string } = {};
   for (let r = headerRow + 1; r < texts.length; r++) {
     const art = cell(r, col.art);
     if (!art || art.indexOf('·') >= 0) continue; // Gruppen-Überschriften überspringen
     const key = [art, cell(r, col.side), cell(r, col.size)].map((x) => x.toUpperCase()).join('|');
     if (rows[key] === undefined) rows[key] = rowOffset + r;
     itemRows.push(rowOffset + r);
+    itemArt[rowOffset + r] = art.toUpperCase();
   }
 
   const istCol = colOffset + col.ist;
@@ -200,10 +202,9 @@ function main(workbook: ExcelScript.Workbook, mailBody: string): string {
           .split(/[,;\n]/)
           .map((x) => x.trim())
           .filter((x) => x.length > 0);
-        if (list.indexOf(batch) < 0) {
-          list.push(batch);
-          bCell.setValue(list.join(', '));
-        }
+        // Jedes Stück einzeln: zwei Schienen aus derselben Charge = Chargennummer zweimal
+        for (let i = 0; i < Math.max(1, Math.round(qty)); i++) list.push(batch);
+        bCell.setValue(list.join(', '));
       }
       // GTIN in der Liste vermerken (falls Spalte vorhanden und noch leer): dann erkennen alle Handys den Code
       const gtin = (p[4] || '').trim();
@@ -220,6 +221,22 @@ function main(workbook: ExcelScript.Workbook, mailBody: string): string {
     }
   }
 
+  // Artikel, von denen in dieser Inventur etwas gescannt wurde (z. B. NEURODYN CARBON):
+  // alle anderen Größen/Seiten dieses Artikels ohne Ist-Wert bekommen 0 (→ „nachbestellen“)
+  const scannedArts: { [art: string]: boolean } = {};
+  for (const r of itemRows) {
+    if ((Number(ws.getCell(r, istCol).getValue()) || 0) > 0) scannedArts[itemArt[r]] = true;
+  }
+  let zeroed = 0;
+  for (const r of itemRows) {
+    if (!scannedArts[itemArt[r]]) continue;
+    const c = ws.getCell(r, istCol);
+    if (String(c.getValue()).trim() === '') {
+      c.setValue(0);
+      zeroed++;
+    }
+  }
+
   if (finishedBy) {
     // Nicht gefundene Artikel auf 0 setzen (→ „nachbestellen“)
     for (const r of itemRows) {
@@ -232,6 +249,7 @@ function main(workbook: ExcelScript.Workbook, mailBody: string): string {
 
   let msg = `${added} Stück eingetragen.`;
   if (reset) msg = 'Neue Inventur: alte Ist-Werte und Chargen geleert. ' + msg;
+  if (zeroed) msg += ` ${zeroed} nicht gescannte Größe(n) auf 0 gesetzt.`;
   if (learned) msg += ` ${learned} GTIN(s) in der Liste ergänzt.`;
   if (missing.length) msg += ` Nicht gefunden: ${missing.join(', ')}.`;
   if (finishedBy) msg += ' Inventur abgeschlossen.';
