@@ -30,7 +30,7 @@ grid.forEach((r, i) => r.forEach((v, j) => (values[`${i},${j}`] = v)));
 const ws = {
   getName: () => 'Bestand',
   getUsedRange: () => ({ getTexts: () => grid.map((r, i) => Array.from({ length: width }, (_, j) => String(values[`${i},${j}`] ?? ''))), getRowIndex: () => 0, getColumnIndex: () => 0 }),
-  getCell: (r: number, c: number) => ({ getValue: () => values[`${r},${c}`] ?? '', setValue: (v: unknown) => (values[`${r},${c}`] = v), getFormula: () => String(values[`${r},${c}`] ?? ''), getMergedAreasOrNullObject: () => undefined }),
+  getCell: (r: number, c: number) => ({ getValue: () => values[`${r},${c}`] ?? '', setValue: (v: unknown) => (values[`${r},${c}`] = v), getFormula: () => String(values[`${r},${c}`] ?? ''), getMergedAreas: () => undefined }),
 };
 
 (async () => {

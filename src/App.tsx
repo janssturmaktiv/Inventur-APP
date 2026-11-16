@@ -186,6 +186,8 @@ export default function App() {
     const list = resend ? scans.filter((x) => findTarget(targets, x, mappings)) : unsent;
     const b = buildMailBatches(list, targets, mappings, settings.userName, finish, { date: inventoryDate(scans), reset: resend });
     if (!b.length) return alert('Keine neuen Scans zum Senden.');
+    // Nur eine Mail: Mail-App direkt öffnen, ohne Zwischenschritt
+    if (b.length === 1) return openMail(b[0]);
     setMailBatches(b);
   }
 

@@ -44,7 +44,7 @@ const ws = {
       values[`${r},${c}`] = v;
     },
     getFormula: () => formulas[`${r},${c}`] ?? String(values[`${r},${c}`] ?? ''),
-    getMergedAreasOrNullObject: () => {
+    getMergedAreas: () => {
       const m = merges.find((x) => x.r === r && c >= x.c1 && c <= x.c2);
       return m ? { getAreas: () => [{ getColumnIndex: () => m.c1 }] } : undefined;
     },

@@ -90,9 +90,19 @@ function main(workbook: ExcelScript.Workbook, mailBody: string): string {
       const x = ws.getCell(rowOffset + r, colOffset + k);
       const isFormula = String(x.getFormula() || '').startsWith('=');
       if (isFormula) continue;
-      const merged = x.getMergedAreasOrNullObject();
-      const isMergeStart = !!merged && merged.getAreas().length > 0 && merged.getAreas()[0].getColumnIndex() === colOffset + k;
-      const isMergeInner = !!merged && merged.getAreas().length > 0 && !isMergeStart;
+      // Verbundene Zellen erkennen (falls die Excel-Version das nicht kann: ohne diese Info weiter)
+      let isMergeStart = false;
+      let isMergeInner = false;
+      try {
+        const merged = x.getMergedAreas();
+        const areas = merged ? merged.getAreas() : [];
+        if (areas.length > 0) {
+          isMergeStart = areas[0].getColumnIndex() === colOffset + k;
+          isMergeInner = !isMergeStart;
+        }
+      } catch (e) {
+        // ignorieren
+      }
       if (isMergeInner) continue;
       if (k === c + 1 && (isMergeStart || String(texts[r][k] ?? '').trim() !== '')) return x;
       if (k === c + 1) {
