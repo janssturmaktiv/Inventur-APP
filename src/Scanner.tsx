@@ -23,6 +23,29 @@ const FORMAT_NAMES: Record<string, string> = { qr_code: 'qr', data_matrix: 'data
 // (mind. 1 s nicht gesehen) und seit dem letzten Treffer mind. 2 s vergangen sind.
 const SAME_CODE_GAP = 2000;
 const SAME_CODE_ABSENT = 1000;
+// Nach jedem Treffer kurz Pause, damit beim Weiterschwenken kein Nachbarartikel mitgezählt wird
+const PAUSE_AFTER_HIT = 1200;
+
+/** Nur den Bildausschnitt im weißen Rahmen auswerten (Video ist per object-fit: cover skaliert). */
+function cropToFrame(video: HTMLVideoElement, frame: HTMLElement, canvas: HTMLCanvasElement): HTMLCanvasElement | null {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!vw || !vh) return null;
+  const v = video.getBoundingClientRect();
+  const f = frame.getBoundingClientRect();
+  const scale = Math.max(v.width / vw, v.height / vh);
+  const offX = (v.width - vw * scale) / 2;
+  const offY = (v.height - vh * scale) / 2;
+  const sx = Math.max(0, (f.left - v.left - offX) / scale);
+  const sy = Math.max(0, (f.top - v.top - offY) / scale);
+  const sw = Math.min(vw - sx, f.width / scale);
+  const sh = Math.min(vh - sy, f.height / scale);
+  if (sw <= 0 || sh <= 0) return null;
+  canvas.width = Math.round(sw);
+  canvas.height = Math.round(sh);
+  canvas.getContext('2d')!.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
 
 type Props = {
   /** true zurückgeben = gespeichert, Kamera bleibt offen (Dauermodus) */
@@ -34,6 +57,7 @@ type Props = {
 
 export function Scanner({ onResult, onClose, continuous, feedback }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState('');
   const [torch, setTorch] = useState<boolean | null>(null); // null = nicht verfügbar
   const trackRef = useRef<MediaStreamTrack | null>(null);
@@ -69,12 +93,15 @@ export function Scanner({ onResult, onClose, continuous, feedback }: Props) {
         let last = '';
         let lastHit = 0;
         let lastSeen = 0;
+        let pauseUntil = 0;
+        const canvas = document.createElement('canvas');
         const tick = async () => {
           if (stopped) return;
           try {
             if (video.readyState >= 2) {
-              const codes = await det.detect(video);
               const now = Date.now();
+              const img = now >= pauseUntil && frameRef.current ? cropToFrame(video, frameRef.current, canvas) : null;
+              const codes = img ? await det.detect(img) : [];
               if (codes.length && !stopped) {
                 const text = codes[0].rawValue;
                 const repeat = text === last && (now - lastHit < SAME_CODE_GAP || now - lastSeen < SAME_CODE_ABSENT);
@@ -89,7 +116,9 @@ export function Scanner({ onResult, onClose, continuous, feedback }: Props) {
                   }
                   if (!keepOpen) return; // Kontrolle wird angezeigt, Scanner schließt
                   last = text;
-                  lastHit = lastSeen = now;
+                  lastHit = now;
+                  pauseUntil = now + PAUSE_AFTER_HIT;
+                  lastSeen = pauseUntil; // während der Pause gilt der Code als weiterhin im Bild
                 }
               }
             }
@@ -132,7 +161,7 @@ export function Scanner({ onResult, onClose, continuous, feedback }: Props) {
   return (
     <div className="scanner">
       <video ref={videoRef} playsInline muted />
-      <div className="scanner-frame" />
+      <div className="scanner-frame" ref={frameRef} />
       <div className="scanner-bar">
         {error ? (
           <p className="scanner-error">{error}</p>
