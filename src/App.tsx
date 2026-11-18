@@ -237,7 +237,7 @@ export default function App() {
   const quickScanRef = useRef<(d: Draft) => boolean>(() => false);
   quickScanRef.current = (d: Draft) => {
     // Schnellmodus: erkannte Produkte ohne Kontrolle speichern, Kamera bleibt offen
-    if (!settings.quickScan || !d.batch) return false;
+    if (settings.quickScan === false || !d.batch) return false;
     const target = targets.length ? findTarget(targets, d, mappings) : undefined;
     if (!target) return false;
     if (d.serial && scans.some((s) => s.serial === d.serial && normId(s.udiDi) === normId(d.udiDi))) return false;
@@ -548,7 +548,7 @@ export default function App() {
         <input ref={fileInput} type="file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden onChange={onFileChosen} />
       </div>
       <label className="quickscan">
-        <input type="checkbox" checked={!!settings.quickScan} onChange={(e) => setSettings((x) => ({ ...x, quickScan: e.target.checked }))} />
+        <input type="checkbox" checked={(settings.quickScan !== false)} onChange={(e) => setSettings((x) => ({ ...x, quickScan: e.target.checked }))} />
         <span>
           Schnell-Scannen: erkannte Produkte ohne Kontrolle speichern
           <small>Unbekannte Codes oder fehlende Charge zeigen weiterhin die Kontrolle.</small>
@@ -598,7 +598,7 @@ export default function App() {
       {scanning && (
         <Scanner
           onResult={onScanned}
-          continuous={!!settings.quickScan}
+          continuous={(settings.quickScan !== false)}
           feedback={scanFeedback}
           onClose={() => {
             setScanning(false);
