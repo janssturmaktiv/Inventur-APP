@@ -190,8 +190,8 @@ export function summaryValues(groups: SummaryGroup[], title: string, stand: stri
   const pad = (r: (string | number)[]) => [...r, ...Array(w - r.length).fill('')];
   const out: (string | number)[][] = [pad([title]), pad([`Stand: ${stand}`]), pad([]), SUMMARY_HEADERS];
   let total = 0;
+  // Jede Zeile vollständig (Hersteller und Produktart in jeder Zeile), damit man in Excel filtern und sortieren kann
   for (const g of groups) {
-    out.push(pad([`${g.hersteller}  ·  ${g.produktart}`, '', '', '', '', g.qty]));
     for (const it of g.items) {
       out.push([g.hersteller, g.produktart, it.artNr, it.name, it.gtin ? "'" + it.gtin : '', it.qty, it.batches.join(', '), it.expiry]);
     }
