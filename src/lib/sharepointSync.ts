@@ -63,8 +63,9 @@ export async function addToRow(f: FileRef, source: TargetSource, row: number, qt
     const batchRef = `${source.batchCol}${row}`;
     const [[bVal]] = await readRange(f, sheet, batchRef);
     batches = splitBatches(bVal);
-    if (batch && !batches.includes(batch)) {
-      batches.push(batch);
+    if (batch) {
+      // Jedes Stück einzeln: zwei Schienen aus derselben Charge = Chargennummer zweimal
+      for (let i = 0; i < Math.max(1, Math.round(qty)); i++) batches.push(batch);
       await writeRange(f, sheet, batchRef, [[batches.join(', ')]]);
     }
   }
@@ -83,35 +84,99 @@ export async function removeFromRow(f: FileRef, source: TargetSource, row: numbe
     const batchRef = `${source.batchCol}${row}`;
     const [[bVal]] = await readRange(f, sheet, batchRef);
     batches = splitBatches(bVal);
-    if (!batchStillUsed && batches.includes(batch)) {
-      batches = batches.filter((b) => b !== batch);
-      await writeRange(f, sheet, batchRef, [[batches.join(', ')]]);
+    // je Stück eine Chargennummer wieder entfernen
+    let changed = false;
+    for (let i = 0; i < Math.max(1, Math.round(qty)); i++) {
+      const at = batches.lastIndexOf(batch);
+      if (at < 0) break;
+      batches.splice(at, 1);
+      changed = true;
     }
+    void batchStillUsed;
+    if (changed) await writeRange(f, sheet, batchRef, [[batches.join(', ')]]);
   }
   return { ist, batch: batches.join(', ') };
 }
 
-/** Spalte über alle Artikelzeilen in einem Rutsch schreiben; andere Zeilen bleiben unverändert. */
+/** Spalte für Artikelzeilen schreiben. Je zusammenhängendem Zeilenblock ein Aufruf, damit verbundene
+ *  Gruppen-Überschriften dazwischen nie berührt werden. Liefert die Zeilen, die sich geändert haben. */
 async function writeColumn(f: FileRef, source: TargetSource, col: string, items: TargetItem[], value: (current: unknown, item: TargetItem) => unknown) {
-  const rows = items.map((i) => i.row!).filter(Boolean);
-  if (!rows.length) return;
-  const first = Math.min(...rows);
-  const last = Math.max(...rows);
-  const addr = `${col}${first}:${col}${last}`;
-  const current = await readRange(f, source.sheetName, addr);
-  const byRow = new Map(items.map((i) => [i.row, i]));
-  const values = current.map((r, n) => {
-    const item = byRow.get(first + n);
-    return [item ? value(r[0], item) : r[0]];
-  });
-  await writeRange(f, source.sheetName, addr, values);
+  const byRow = new Map(items.filter((i) => i.row).map((i) => [i.row!, i]));
+  const rows = [...byRow.keys()].sort((a, b) => a - b);
+  const changed: { row: number; value: unknown }[] = [];
+  for (let i = 0; i < rows.length; ) {
+    let j = i;
+    while (j + 1 < rows.length && rows[j + 1] === rows[j] + 1) j++;
+    const first = rows[i];
+    const last = rows[j];
+    const addr = `${col}${first}:${col}${last}`;
+    const current = await readRange(f, source.sheetName, addr);
+    let dirty = false;
+    const values = current.map((r, n) => {
+      const v = value(r[0], byRow.get(first + n)!);
+      if (v !== r[0]) {
+        dirty = true;
+        changed.push({ row: first + n, value: v });
+      }
+      return [v];
+    });
+    if (dirty) await writeRange(f, source.sheetName, addr, values);
+    i = j + 1;
+  }
+  return changed;
+}
+
+const isEmpty = (v: unknown) => v === '' || v === null || v === undefined;
+const toSerial = (iso: string) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000);
+};
+
+async function addChecker(f: FileRef, source: TargetSource, name: string) {
+  if (!source.checkerCell || !name.trim()) return;
+  const [[cur]] = await readRange(f, source.sheetName, source.checkerCell);
+  const names = String(cur ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+  const add = name.split(',').map((x) => x.trim()).filter((x) => x && !names.includes(x));
+  if (add.length) await writeRange(f, source.sheetName, source.checkerCell, [[[...names, ...add].join(', ')]]);
+}
+
+/**
+ * Vor dem ersten Scan einer Inventur aufrufen. Steht in der Liste ein anderes Inventurdatum als der Tag
+ * des ersten Scans, werden Ist und Chargen-Nr. geleert und das Datum gesetzt. Der Name kommt zu „Geprüft von“.
+ * Liefert 'reset', 'ok' oder 'older' (Scans gehören zu einer älteren Inventur als die Liste).
+ */
+export async function ensureInventory(f: FileRef, source: TargetSource, items: TargetItem[], inventoryDate: string, checker: string): Promise<'reset' | 'ok' | 'older'> {
+  const want = toSerial(inventoryDate);
+  let result: 'reset' | 'ok' = 'ok';
+  if (source.dateCell) {
+    const [[cur]] = await readRange(f, source.sheetName, source.dateCell);
+    const have = Math.floor(Number(cur) || 0);
+    if (have && want < have) return 'older';
+    if (have !== want) {
+      await resetInventory(f, source, items);
+      if (source.checkerCell) await writeRange(f, source.sheetName, source.checkerCell, [['']]);
+      await writeRange(f, source.sheetName, source.dateCell, [[want]]);
+      result = 'reset';
+    }
+  }
+  await addChecker(f, source, checker);
+  return result;
+}
+
+/** Alle Größen/Seiten eines gescannten Artikels ohne Ist-Wert auf 0 setzen (→ „nachbestellen“). */
+export async function zeroFillArticle(f: FileRef, source: TargetSource, items: TargetItem[], articleNo: string) {
+  const same = items.filter((i) => normId(i.articleNo) === normId(articleNo));
+  return writeColumn(f, source, source.istCol!, same, (cur) => (isEmpty(cur) ? 0 : cur));
 }
 
 /** Inventur abschließen: leere Ist-Felder auf 0 (→ nachbestellen), Datum und Prüfer eintragen. */
 export async function finishInventory(f: FileRef, source: TargetSource, items: TargetItem[], checker: string) {
-  await writeColumn(f, source, source.istCol!, items, (cur) => (cur === '' || cur === null ? 0 : cur));
-  if (source.dateCell) await writeRange(f, source.sheetName, source.dateCell, [[excelToday()]]);
-  if (source.checkerCell && checker) await writeRange(f, source.sheetName, source.checkerCell, [[checker]]);
+  await writeColumn(f, source, source.istCol!, items, (cur) => (isEmpty(cur) ? 0 : cur));
+  if (source.dateCell) {
+    const [[cur]] = await readRange(f, source.sheetName, source.dateCell);
+    if (!Number(cur)) await writeRange(f, source.sheetName, source.dateCell, [[excelToday()]]);
+  }
+  await addChecker(f, source, checker);
 }
 
 /** Neue Inventur: Ist und Chargen-Nr. aller Artikelzeilen leeren. */

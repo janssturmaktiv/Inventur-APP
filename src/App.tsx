@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountInfo } from '@azure/msal-browser';
 import { MS_CONFIG } from './config';
 import { getFileInfo, initAuth, listDrives, listFolder, login, logout, me, resolveFile, siteFromUrl, type BrowseEntry, type FileRef } from './lib/msGraph';
-import { addToRow, finishInventory, loadShared, removeFromRow, resetInventory, saveMapping } from './lib/sharepointSync';
+import { addToRow, ensureInventory, finishInventory, loadShared, removeFromRow, resetInventory, saveMapping, zeroFillArticle } from './lib/sharepointSync';
 import { Scanner } from './Scanner';
 import { parseUdi, normId } from './lib/udi';
 import { parseTargetWorkbook } from './lib/targetList';
@@ -205,12 +205,35 @@ export default function App() {
     setMailBatches((list) => (list ? list.map((x) => (x === b ? { ...x, scanIds: [], subject: x.subject + ' ✓' } : x)) : list));
   }
 
+  // Pro Datei und Inventurtag nur einmal prüfen, ob eine neue Inventur beginnt
+  const inventoryChecked = useRef('');
   async function pushScan(scan: Scan, target: TargetItem) {
     if (!spFile || !source || !target.row) return;
     try {
+      const date = inventoryDate([...scans, scan]);
+      const checkKey = `${spFile.itemId}|${date}|${settings.userName}`;
+      if (inventoryChecked.current !== checkKey) {
+        const r = await ensureInventory(spFile, source, targets, date, settings.userName);
+        if (r === 'older') {
+          setScans((p) => p.map((x) => (x.id === scan.id ? { ...x, sync: 'pending', syncedRow: target.row } : x)));
+          setSpError('In der Liste läuft schon eine neuere Inventur. Bitte unter ⚙︎ die alten Scans auf diesem Handy löschen.');
+          return;
+        }
+        inventoryChecked.current = checkKey;
+        if (r === 'reset') {
+          setTargets((p) => p.map((t) => ({ ...t, currentIst: null, currentBatch: '' })));
+          flash('Neue Inventur: alte Werte in der Liste geleert');
+        }
+      }
       const res = await addToRow(spFile, source, target.row, scan.quantity, scan.batch);
       setScans((p) => p.map((x) => (x.id === scan.id ? { ...x, sync: 'ok', syncedRow: target.row } : x)));
       setTargets((p) => p.map((t) => (t.row === target.row ? { ...t, currentIst: res.ist, currentBatch: res.batch } : t)));
+      // übrige Größen/Seiten dieses Artikels ohne Ist-Wert auf 0
+      const zeroed = await zeroFillArticle(spFile, source, targets, target.articleNo).catch(() => []);
+      if (zeroed.length) {
+        const rows = new Set(zeroed.map((z) => z.row));
+        setTargets((p) => p.map((t) => (t.row && rows.has(t.row) && t.row !== target.row ? { ...t, currentIst: 0 } : t)));
+      }
       setLastSync(new Date());
     } catch (e) {
       flash('Nicht gesendet, wird später erneut versucht');
@@ -483,7 +506,7 @@ export default function App() {
           </button>
         </div>
       )}
-      {!account && !settings.mailTo && (
+      {!account && (
         <div className="signin">
           <div className="grow">
             <b>Gemeinsame Liste in SharePoint</b>

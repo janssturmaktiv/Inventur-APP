@@ -83,12 +83,22 @@ function parseSheet(wb: XLSX.WorkBook, sheetName: string, fileName: string): Par
       for (let ri = 0; ri < headerIdx; ri++) {
         const ci = rows[ri].findIndex((c) => re.test(String(c).trim()));
         if (ci !== -1) {
-          // nächste Spalte rechts, die nicht leer ist (oder direkt daneben)
-          let vi = ci + 1;
-          for (let k = ci + 1; k < Math.min(rows[ri].length, ci + 4); k++) {
-            if (String(rows[ri][k] ?? '').trim()) { vi = k; break; }
+          // Wertzelle: direkt rechts daneben; ist die leer und nicht verbunden, die nächste verbundene oder
+          // befüllte Zelle (z. B. „Geprüft von:“ in E4, Wert im verbundenen Feld G4:H4). Formelzellen nie.
+          const r = startRow + ri;
+          const merges = sheet['!merges'] ?? [];
+          const mergeAt = (c: number) => merges.find((m) => r >= m.s.r && r <= m.e.r && c >= m.s.c && c <= m.e.c);
+          let fallback: number | undefined;
+          for (let k = ci + 1; k <= ci + 3; k++) {
+            const cell = sheet[XLSX.utils.encode_cell({ r, c: k })] as XLSX.CellObject | undefined;
+            if (cell?.f) continue;
+            const m = mergeAt(k);
+            if (m && m.s.c !== k) continue;
+            const filled = String(rows[ri][k] ?? '').trim() !== '';
+            if (m || filled) return XLSX.utils.encode_cell({ r, c: k });
+            if (fallback === undefined) fallback = k;
           }
-          return XLSX.utils.encode_cell({ r: startRow + ri, c: vi });
+          return XLSX.utils.encode_cell({ r, c: fallback ?? ci + 1 });
         }
       }
       return undefined;

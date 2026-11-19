@@ -1,7 +1,7 @@
 // Testet die SharePoint-Anbindung gegen einen nachgebauten Microsoft-Graph-Server (Zellen im Speicher).
 import { readFileSync } from 'fs';
 import { __setTokenProvider, type FileRef } from '../src/lib/msGraph';
-import { addToRow, finishInventory, loadShared, removeFromRow, resetInventory, saveMapping } from '../src/lib/sharepointSync';
+import { addToRow, ensureInventory, finishInventory, loadShared, removeFromRow, resetInventory, saveMapping, zeroFillArticle } from '../src/lib/sharepointSync';
 
 const xlsx = readFileSync(new URL('./beispiel-liste.xlsx', import.meta.url));
 const cells: Record<string, Record<string, unknown>> = { Bestand: {} };
@@ -73,9 +73,9 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   r = await addToRow(f, st.source, m.row!, 1, 'LOT-B'); // Kollege scannt zweites Stück
   r = await addToRow(f, st.source, m.row!, 1, 'LOT-A');
   checks.push(['Ist hochgezählt', cells.Bestand[`F${m.row}`] === 3 && r.ist === 3]);
-  checks.push(['Chargen gesammelt', cells.Bestand[`I${m.row}`] === 'LOT-A, LOT-B']);
+  checks.push(['Chargen je Stück gesammelt', cells.Bestand[`I${m.row}`] === 'LOT-A, LOT-B, LOT-A']);
   r = await removeFromRow(f, st.source, m.row!, 1, 'LOT-B', false);
-  checks.push(['Austragen', cells.Bestand[`F${m.row}`] === 2 && cells.Bestand[`I${m.row}`] === 'LOT-A']);
+  checks.push(['Austragen', cells.Bestand[`F${m.row}`] === 2 && cells.Bestand[`I${m.row}`] === 'LOT-A, LOT-A']);
   await saveMapping(f, '04049999123457', m);
   await saveMapping(f, '04049999123457', m); // zweites Mal: keine Dublette
   checks.push(['Zuordnungsblatt versteckt angelegt', sheets.some((s) => s.name === 'App-Zuordnungen' && s.visibility === 'Hidden')]);
@@ -87,8 +87,24 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   checks.push(['Abschluss: leere auf 0, gezählte bleiben', istVals.filter((v) => v === 0).length === 10 && cells.Bestand[`F${m.row}`] === 2]);
   checks.push(['Gruppenzeilen unberührt', cells.Bestand.F15 === '' || cells.Bestand.F15 === undefined]);
   checks.push(['Datum und Prüfer', Number(cells.Bestand.B4) > 46000 && cells.Bestand.G4 === 'Phillip']);
+  checks.push(['Nie in Gruppenzeilen geschrieben', !calls.some((c) => /F(9|15|16|20|21)[:']/.test(c) && c.startsWith('PATCH'))]);
   await resetInventory(f, st.source, st.items);
-  checks.push(['Neue Inventur leert', st.items.every((i) => cells.Bestand[`F${i.row}`] === '' && cells.Bestand[`I${i.row}`] === '')]);
+  const empty = (v: unknown) => v === '' || v === undefined;
+  checks.push(['Neue Inventur leert', st.items.every((i) => empty(cells.Bestand[`F${i.row}`]) && empty(cells.Bestand[`I${i.row}`]))]);
+  // Neue Inventur automatisch: altes Datum in B4 -> leeren, Datum setzen, Prüfer neu
+  cells.Bestand.B4 = 46323; // 28.10.2026
+  cells.Bestand[`F${m.row}`] = 1;
+  cells.Bestand.G4 = 'Otremba';
+  const e1 = await ensureInventory(f, st.source, st.items, '2026-11-19', 'Anna');
+  checks.push(['ensureInventory: neue Inventur', e1 === 'reset' && empty(cells.Bestand[`F${m.row}`]) && cells.Bestand.B4 === 46345 && cells.Bestand.G4 === 'Anna']);
+  const e2 = await ensureInventory(f, st.source, st.items, '2026-11-19', 'Bob');
+  checks.push(['ensureInventory: gleiche Inventur, Prüfer ergänzt', e2 === 'ok' && cells.Bestand.G4 === 'Anna, Bob']);
+  checks.push(['ensureInventory: ältere Scans abgelehnt', (await ensureInventory(f, st.source, st.items, '2026-11-10', 'X')) === 'older']);
+  await addToRow(f, st.source, m.row!, 1, 'L1');
+  const z = await zeroFillArticle(f, st.source, st.items, m.articleNo);
+  const sameArt = st.items.filter((i) => i.articleNo === m.articleNo && i.row !== m.row);
+  const otherArt = st.items.filter((i) => i.articleNo !== m.articleNo);
+  checks.push(['Artikel-Rest auf 0, andere Artikel leer', z.length === sameArt.length && sameArt.every((i) => cells.Bestand[`F${i.row}`] === 0) && otherArt.every((i) => empty(cells.Bestand[`F${i.row}`])) && cells.Bestand[`F${m.row}`] === 1]);
   let fail = 0;
   for (const [n, ok] of checks) {
     if (!ok) fail++;
