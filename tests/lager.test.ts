@@ -115,7 +115,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   check('Scan gelöscht', after.length === 3 && !after.some((s) => s.id === '3'));
   await writeSummary(f, after, 'Lagerinventur 2026-11-19');
   const sum = sheetsWritten['Übersicht'];
-  check('Übersicht geschrieben', !!sum && sum[0][0] === 'Lagerinventur 2026-11-19' && sum.some((r) => r[0] === 'Sturm aktiv GmbH' && r[1] === 'Einmalhandschuhe') && !sum.some((r) => String(r[0]).includes('·')));
+  check('Übersicht geschrieben', !!sum && sum[0][0] === 'Lagerinventur 2026-11-19' && sum.some((r) => r[0] === 'Sturm aktiv GmbH' && r[1] === 'Einmalhandschuhe') && sum.some((r, i) => r[0] === 'Sturm aktiv GmbH' && r[1] === '' && r[5] === 3 && sum[i - 1].every((x) => x === '')));
 
   let fail = 0;
   for (const [n, ok] of checks) {

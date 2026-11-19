@@ -184,22 +184,34 @@ export function summarize(scans: LagerScan[]): SummaryGroup[] {
 
 export const SUMMARY_HEADERS = ['Hersteller', 'Produktart', 'Artikel-Nr.', 'Bezeichnung', 'GTIN', 'Menge', 'Chargen', 'Frühester Verfall'];
 
-/** Werte für das Blatt „Übersicht“: Kopf, dann je Hersteller/Produktart eine Überschrift und die Artikel. */
-export function summaryValues(groups: SummaryGroup[], title: string, stand: string): (string | number)[][] {
+/** Blatt „Übersicht“: Kopf, dann je Hersteller eine Leerzeile, eine Überschrift (mit Summe) und vollständige Artikelzeilen. */
+export function summaryLayout(groups: SummaryGroup[], title: string, stand: string): { values: (string | number)[][]; headingRows: number[] } {
   const w = SUMMARY_HEADERS.length;
   const pad = (r: (string | number)[]) => [...r, ...Array(w - r.length).fill('')];
-  const out: (string | number)[][] = [pad([title]), pad([`Stand: ${stand}`]), pad([]), SUMMARY_HEADERS];
+  const values: (string | number)[][] = [pad([title]), pad([`Stand: ${stand}`]), pad([]), SUMMARY_HEADERS];
+  const headingRows: number[] = []; // 1-basierte Excel-Zeilen der Hersteller-Überschriften
   let total = 0;
-  // Jede Zeile vollständig (Hersteller und Produktart in jeder Zeile), damit man in Excel filtern und sortieren kann
-  for (const g of groups) {
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i];
+    if (i === 0 || groups[i - 1].hersteller !== g.hersteller) {
+      const sum = groups.filter((x) => x.hersteller === g.hersteller).reduce((n, x) => n + x.qty, 0);
+      values.push(pad([]));
+      values.push(pad([g.hersteller, '', '', '', '', sum]));
+      headingRows.push(values.length);
+    }
     for (const it of g.items) {
-      out.push([g.hersteller, g.produktart, it.artNr, it.name, it.gtin ? "'" + it.gtin : '', it.qty, it.batches.join(', '), it.expiry]);
+      values.push([g.hersteller, g.produktart, it.artNr, it.name, it.gtin ? "'" + it.gtin : '', it.qty, it.batches.join(', '), it.expiry]);
     }
     total += g.qty;
   }
-  out.push(pad([]));
-  out.push(pad(['Gesamt', '', '', '', '', total]));
-  return out;
+  values.push(pad([]));
+  values.push(pad(['Gesamt', '', '', '', '', total]));
+  headingRows.push(values.length);
+  return { values, headingRows };
+}
+
+export function summaryValues(groups: SummaryGroup[], title: string, stand: string): (string | number)[][] {
+  return summaryLayout(groups, title, stand).values;
 }
 
 /** Spaltenbuchstabe (1 = A). */

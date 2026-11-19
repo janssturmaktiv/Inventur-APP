@@ -1,7 +1,7 @@
 // Lagerinventur in SharePoint: Ordner, Inventurdatei (Blätter Übersicht / Scans / App-Artikel), Artikelstamm.
 import * as XLSX from 'xlsx';
 import { graph, downloadBase64, type FileRef } from './msGraph';
-import { ARTICLE_HEADERS, SCAN_HEADERS, SUMMARY_HEADERS, articleToRow, colLetter, rowToArticle, rowToScan, scanToRow, summarize, summaryValues, type Article, type LagerScan } from './lagerData';
+import { ARTICLE_HEADERS, SCAN_HEADERS, SUMMARY_HEADERS, articleToRow, colLetter, rowToArticle, rowToScan, scanToRow, summarize, summaryLayout, summaryValues, type Article, type LagerScan } from './lagerData';
 
 export type FolderRef = { driveId: string; itemId: string; name: string; webUrl?: string };
 
@@ -148,8 +148,18 @@ export async function deleteScan(f: FileRef, id: string): Promise<boolean> {
 /** Blatt „Übersicht“ aus allen Scans neu schreiben. */
 export async function writeSummary(f: FileRef, scans: LagerScan[], title: string) {
   const stand = new Date().toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
-  const values = summaryValues(summarize(scans), title, stand);
+  const { values, headingRows } = summaryLayout(summarize(scans), title, stand);
   const last = colLetter(SUMMARY_HEADERS.length);
-  await graph(`${wsPath(f, SUMMARY_SHEET)}/range(address='A5:${last}5000')/clear`, { method: 'POST', body: JSON.stringify({ applyTo: 'Contents' }) });
-  await graph(`${wsPath(f, SUMMARY_SHEET)}/range(address='A1:${last}${values.length}')`, { method: 'PATCH', body: JSON.stringify({ values }) });
+  const sheet = wsPath(f, SUMMARY_SHEET);
+  await graph(`${sheet}/range(address='A5:${last}5000')/clear`, { method: 'POST', body: JSON.stringify({ applyTo: 'Contents' }) });
+  await graph(`${sheet}/range(address='A1:${last}${values.length}')`, { method: 'PATCH', body: JSON.stringify({ values }) });
+  // Hersteller-Überschriften fett (vorher alles darunter wieder normal)
+  try {
+    await graph(`${sheet}/range(address='A5:${last}5000')/format/font`, { method: 'PATCH', body: JSON.stringify({ bold: false }) });
+    for (const r of headingRows) {
+      await graph(`${sheet}/range(address='A${r}:${last}${r}')/format/font`, { method: 'PATCH', body: JSON.stringify({ bold: true }) });
+    }
+  } catch (e) {
+    console.warn('Formatierung nicht gesetzt', e);
+  }
 }
