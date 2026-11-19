@@ -61,7 +61,11 @@ export default function Lager() {
         if (acc) setPerson((await me().catch(() => null))?.displayName || acc.name || acc.username);
       })
       .catch((e) => setError('Anmeldung: ' + errText(e)))
-      .finally(() => setAuthReady(true));
+      .finally(() => {
+        setAuthReady(true);
+        sessionStorage.removeItem('afterLogin');
+        if (!/^#lager/i.test(window.location.hash)) history.replaceState(null, '', window.location.pathname + window.location.search.replace(/[?&](code|state|session_state)=[^&]*/g, '') + '#lager');
+      });
   }, []);
 
   // Ordner aus fest eingestelltem Link übernehmen
@@ -343,7 +347,13 @@ export default function Lager() {
             <b>Mit dem Firmenkonto anmelden</b>
             <span>Jeder Scan landet sofort in der gemeinsamen Excel-Datei in SharePoint.</span>
           </div>
-          <button className="btn primary" onClick={() => login().catch((e) => setError(errText(e)))}>
+          <button
+            className="btn primary"
+            onClick={() => {
+              sessionStorage.setItem('afterLogin', 'lager');
+              login().catch((e) => setError(errText(e)));
+            }}
+          >
             Anmelden
           </button>
         </div>
