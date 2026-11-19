@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountInfo } from '@azure/msal-browser';
 import { MS_CONFIG } from './config';
-import { getFileInfo, initAuth, listDrives, listFolder, login, logout, me, resolveFile, siteFromUrl, type BrowseEntry, type FileRef } from './lib/msGraph';
-import { addToRow, ensureInventory, finishInventory, loadShared, removeFromRow, resetInventory, saveMapping, zeroFillArticle } from './lib/sharepointSync';
+import { __setTokenProvider, getFileInfo, initAuth, listDrives, listFolder, login, logout, me, resolveFile, siteFromUrl, type BrowseEntry, type FileRef } from './lib/msGraph';
+import { applyScans, finishInventory, loadShared, removeFromRow, resetInventory, saveMapping, type RowEntry } from './lib/sharepointSync';
 import { Scanner } from './Scanner';
 import { parseUdi, normId } from './lib/udi';
 import { parseTargetWorkbook } from './lib/targetList';
@@ -95,8 +95,10 @@ export default function App() {
   // Im SharePoint-Modus zählt der Stand der gemeinsamen Datei (inkl. Scans der Kollegen)
   const recon: Reconciliation = useMemo(() => {
     if (!shared) return localRecon;
+    const pendingByRow = new Map<number, number>();
+    for (const x of scans) if (x.sync === 'pending' && x.syncedRow) pendingByRow.set(x.syncedRow, (pendingByRow.get(x.syncedRow) ?? 0) + x.quantity);
     const rows: ReconRow[] = localRecon.rows.map((r) => {
-      const ist = r.item.currentIst ?? 0;
+      const ist = (r.item.currentIst ?? 0) + (r.item.row ? pendingByRow.get(r.item.row) ?? 0 : 0);
       return { ...r, foundQty: ist, status: ist >= r.item.expectedQty ? 'vollständig' : ist > 0 ? 'teilweise' : 'fehlend' };
     });
     const unknown = scans.filter((x) => x.sync === 'unassigned');
@@ -107,6 +109,12 @@ export default function App() {
 
   // --- Microsoft-Anmeldung und SharePoint ---
   useEffect(() => {
+    // Nur Entwicklung: SharePoint-Modus ohne echtes Firmenkonto testen
+    if (import.meta.env.DEV && localStorage.getItem('konsi.test')) {
+      __setTokenProvider(async () => 'TEST');
+      setAccount({ username: 'test@example.com', name: 'Test' } as AccountInfo);
+      return;
+    }
     initAuth()
       .then(async (acc) => {
         setAccount(acc);
@@ -205,49 +213,41 @@ export default function App() {
     setMailBatches((list) => (list ? list.map((x) => (x === b ? { ...x, scanIds: [], subject: x.subject + ' ✓' } : x)) : list));
   }
 
-  // Pro Datei und Inventurtag nur einmal prüfen, ob eine neue Inventur beginnt
-  const inventoryChecked = useRef('');
-  // Alle Schreibvorgänge dieses Handys nacheinander ausführen, damit sich schnelle Scans nicht überschreiben
+  // Alle Schreibvorgänge dieses Handys nacheinander ausführen
   const spQueue = useRef<Promise<unknown>>(Promise.resolve());
   function enqueue<T>(job: () => Promise<T>): Promise<T> {
     const p = spQueue.current.then(job, job);
     spQueue.current = p.catch(() => {});
     return p;
   }
-  function pushScan(scan: Scan, target: TargetItem) {
-    return enqueue(() => doPushScan(scan, target));
-  }
-  async function doPushScan(scan: Scan, target: TargetItem) {
-    if (!spFile || !source || !target.row) return;
+
+  /** Gesammelte Scans (oder die übergebenen) in einem Rutsch in die SharePoint-Liste eintragen. */
+  async function sendShared(list?: Scan[]) {
+    if (!spFile || !source) return;
+    const toSend = (list ?? scans.filter((x) => x.sync === 'pending')).filter((x) => x.syncedRow);
+    if (!toSend.length) return;
+    const entries = new Map<number, RowEntry>();
+    for (const sc of [...toSend].reverse()) {
+      const e = entries.get(sc.syncedRow!) ?? { row: sc.syncedRow!, qty: 0, batches: [] };
+      e.qty += sc.quantity;
+      if (sc.batch) for (let i = 0; i < Math.max(1, Math.round(sc.quantity)); i++) e.batches.push(sc.batch);
+      entries.set(e.row, e);
+    }
+    setBusy(`${toSend.length} Scan(s) werden eingetragen …`);
     try {
-      const date = inventoryDate([...scans, scan]);
-      const checkKey = `${spFile.itemId}|${date}|${settings.userName}`;
-      if (inventoryChecked.current !== checkKey) {
-        const r = await ensureInventory(spFile, source, targets, date, settings.userName);
-        if (r === 'older') {
-          setScans((p) => p.map((x) => (x.id === scan.id ? { ...x, sync: 'pending', syncedRow: target.row } : x)));
-          setSpError('In der Liste läuft schon eine neuere Inventur. Bitte unter ⚙︎ die alten Scans auf diesem Handy löschen.');
-          return;
-        }
-        inventoryChecked.current = checkKey;
-        if (r === 'reset') {
-          setTargets((p) => p.map((t) => ({ ...t, currentIst: null, currentBatch: '' })));
-          flash('Neue Inventur: alte Werte in der Liste geleert');
-        }
+      const r = await enqueue(() => applyScans(spFile, source, targets, [...entries.values()], inventoryDate(scans), settings.userName));
+      if (r === 'older') {
+        setSpError('In der Liste läuft schon eine neuere Inventur. Bitte unter ⚙︎ die alten Scans auf diesem Handy löschen.');
+        return;
       }
-      const res = await addToRow(spFile, source, target.row, scan.quantity, scan.batch);
-      setScans((p) => p.map((x) => (x.id === scan.id ? { ...x, sync: 'ok', syncedRow: target.row } : x)));
-      setTargets((p) => p.map((t) => (t.row === target.row ? { ...t, currentIst: res.ist, currentBatch: res.batch } : t)));
-      // übrige Größen/Seiten dieses Artikels ohne Ist-Wert auf 0
-      const zeroed = await zeroFillArticle(spFile, source, targets, target.articleNo).catch(() => []);
-      if (zeroed.length) {
-        const rows = new Set(zeroed.map((z) => z.row));
-        setTargets((p) => p.map((t) => (t.row && rows.has(t.row) && t.row !== target.row ? { ...t, currentIst: 0 } : t)));
-      }
-      setLastSync(new Date());
+      const ids = new Set(toSend.map((x) => x.id));
+      setScans((p) => p.map((x) => (ids.has(x.id) ? { ...x, sync: 'ok' } : x)));
+      await refreshShared(spFile, true);
+      flash(r === 'reset' ? 'Neue Inventur gestartet und eingetragen' : `${toSend.length} Scan(s) eingetragen`);
     } catch (e) {
-      flash('Nicht gesendet, wird später erneut versucht');
-      setSpError(`Eintragen fehlgeschlagen: ${e instanceof Error ? e.message : e}`);
+      setSpError(`Eintragen fehlgeschlagen, bitte erneut senden: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setBusy('');
     }
   }
 
@@ -259,13 +259,12 @@ export default function App() {
     if (!confirm(`Liste neu befüllen?\n\nIn der SharePoint-Liste werden Ist und Chargen-Nr. geleert und mit den ${list.length} Scans dieses Handys neu eingetragen. Nur nutzen, wenn du allein inventurst oder die Liste falsch ist.`)) return;
     setBusy('Liste wird neu befüllt …');
     try {
-      await enqueue(async () => {
-        await resetInventory(spFile, source, targets);
-        inventoryChecked.current = '';
-      });
-      for (const { sc, t } of list) await pushScan(sc, t!);
-      await refreshShared(spFile, true);
-      flash('Liste neu befüllt');
+      await enqueue(() => resetInventory(spFile, source, targets));
+      const resend = list.map(({ sc, t }) => ({ ...sc, sync: 'pending' as const, syncedRow: t!.row }));
+      const byId = new Map(resend.map((x) => [x.id, x]));
+      setScans((p) => p.map((x) => byId.get(x.id) ?? x));
+      setBusy('');
+      await sendShared(resend);
     } catch (e) {
       alert(`Fehlgeschlagen: ${e instanceof Error ? e.message : e}`);
     } finally {
@@ -273,13 +272,10 @@ export default function App() {
     }
   }
 
-  async function retryPending() {
-    const pending = scans.filter((x) => x.sync === 'pending');
-    for (const sc of [...pending].reverse()) {
-      const t = targets.find((x) => x.row === sc.syncedRow) ?? findTarget(targets, sc, mappings);
-      if (t) await pushScan(sc, t);
-    }
+  function retryPending() {
+    return sendShared();
   }
+
 
   const title = `Konsilager-Inventur${settings.listName ? ` – ${settings.listName}` : ''}`;
 
@@ -346,9 +342,9 @@ export default function App() {
     if (shared) {
       const target = findTarget(targets, scan, newMappings);
       if (target?.row) {
+        // wird gesammelt und mit „Senden“ (oder beim Schließen der Kamera) in einem Rutsch eingetragen
         scan.sync = 'pending';
         scan.syncedRow = target.row;
-        pushScan(scan, target);
         if (newMappings !== mappings && spFile && (scan.udiDi || scan.productCode)) {
           saveMapping(spFile, (scan.udiDi || scan.productCode)!, target).catch((e) => console.warn('Zuordnung nicht geteilt', e));
         }
@@ -555,10 +551,13 @@ export default function App() {
         </div>
       )}
       {shared && scans.some((x) => x.sync === 'pending') && (
-        <div className="errorbar warnbar">
-          {scans.filter((x) => x.sync === 'pending').length} Scan(s) noch nicht in SharePoint eingetragen.
-          <button className="textbtn small" onClick={retryPending}>
-            Erneut senden
+        <div className="signin">
+          <div className="grow">
+            <b>{scans.filter((x) => x.sync === 'pending').length} Scan(s) gesammelt</b>
+            <span>Noch nicht in der Excel-Liste. Wird beim Schließen der Kamera automatisch gesendet.</span>
+          </div>
+          <button className="btn primary" onClick={() => retryPending()}>
+            Senden
           </button>
         </div>
       )}
@@ -658,6 +657,7 @@ export default function App() {
           onClose={() => {
             setScanning(false);
             setScanFeedback('');
+            if (shared) setTimeout(() => sendShared(), 0);
           }}
         />
       )}

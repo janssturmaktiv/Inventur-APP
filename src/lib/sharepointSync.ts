@@ -228,3 +228,55 @@ export async function resetInventory(f: FileRef, source: TargetSource, items: Ta
   await writeColumn(f, source, source.istCol!, items, () => '');
   if (source.batchCol) await writeColumn(f, source, source.batchCol, items, () => '');
 }
+
+export type RowEntry = { row: number; qty: number; batches: string[] };
+
+/**
+ * Gesammelte Scans in einem Rutsch eintragen: Ist um die Mengen erhöhen, Chargen (je Stück) anhängen,
+ * übrige Größen/Seiten der gescannten Artikel ohne Ist-Wert auf 0. Je Zeilenblock ein Lese- und ein Schreibaufruf.
+ */
+export async function applyScans(
+  f: FileRef,
+  source: TargetSource,
+  items: TargetItem[],
+  entries: RowEntry[],
+  inventoryDate: string,
+  checker: string,
+): Promise<'ok' | 'reset' | 'older'> {
+  const state = await ensureInventory(f, source, items, inventoryDate, checker);
+  if (state === 'older' || !entries.length) return state;
+  const byRow = new Map(entries.map((e) => [e.row, e]));
+  const scannedArts = new Set(entries.map((e) => normId(items.find((i) => i.row === e.row)?.articleNo)).filter(Boolean));
+  const itemByRow = new Map(items.filter((i) => i.row).map((i) => [i.row!, i]));
+  for (const [a, b] of rowBlocks(items)) {
+    const istAddr = `${source.istCol}${a}:${source.istCol}${b}`;
+    const cur = await readRange(f, source.sheetName, istAddr);
+    let dirty = false;
+    const next = cur.map((r, n) => {
+      const row = a + n;
+      const e = byRow.get(row);
+      const v = r[0];
+      if (e) {
+        dirty = true;
+        return [(Number(v) || 0) + e.qty];
+      }
+      if (isEmpty(v) && scannedArts.has(normId(itemByRow.get(row)?.articleNo))) {
+        dirty = true;
+        return [0];
+      }
+      return [v];
+    });
+    if (dirty) await writeRange(f, source.sheetName, istAddr, next);
+    if (source.batchCol && entries.some((e) => e.row >= a && e.row <= b && e.batches.length)) {
+      const bAddr = `${source.batchCol}${a}:${source.batchCol}${b}`;
+      const bcur = await readRange(f, source.sheetName, bAddr);
+      const bnext = bcur.map((r, n) => {
+        const e = byRow.get(a + n);
+        if (!e || !e.batches.length) return [r[0]];
+        return [[...splitBatches(r[0]), ...e.batches].join(', ')];
+      });
+      await writeRange(f, source.sheetName, bAddr, bnext);
+    }
+  }
+  return state;
+}

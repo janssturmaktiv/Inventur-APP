@@ -1,7 +1,7 @@
 // Testet die SharePoint-Anbindung gegen einen nachgebauten Microsoft-Graph-Server (Zellen im Speicher).
 import { readFileSync } from 'fs';
 import { __setTokenProvider, type FileRef } from '../src/lib/msGraph';
-import { addToRow, ensureInventory, finishInventory, loadShared, removeFromRow, resetInventory, saveMapping, zeroFillArticle } from '../src/lib/sharepointSync';
+import { addToRow, applyScans, ensureInventory, finishInventory, loadShared, removeFromRow, resetInventory, saveMapping, zeroFillArticle } from '../src/lib/sharepointSync';
 
 const xlsx = readFileSync(new URL('./beispiel-liste.xlsx', import.meta.url));
 const cells: Record<string, Record<string, unknown>> = { Bestand: {} };
@@ -105,6 +105,18 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const sameArt = st.items.filter((i) => i.articleNo === m.articleNo && i.row !== m.row);
   const otherArt = st.items.filter((i) => i.articleNo !== m.articleNo);
   checks.push(['Artikel-Rest auf 0, andere Artikel leer', z.length === sameArt.length && sameArt.every((i) => cells.Bestand[`F${i.row}`] === 0) && otherArt.every((i) => empty(cells.Bestand[`F${i.row}`])) && cells.Bestand[`F${m.row}`] === 1]);
+  // Gesammelte Scans in einem Rutsch: neue Inventur, zwei Stück gleiche Größe, Rest des Artikels 0
+  cells.Bestand.B4 = 46323;
+  const xs = st.items.find((i) => i.key === '07780|RECHTS|XS')!;
+  const callsBefore = calls.length;
+  const ar = await applyScans(f, st.source, st.items, [{ row: m.row!, qty: 2, batches: ['A1', 'A1'] }, { row: xs.row!, qty: 1, batches: ['B7'] }], '2026-11-20', 'Phillip');
+  const art1 = st.items.filter((i) => i.articleNo === m.articleNo && i.row !== m.row);
+  const art2 = st.items.filter((i) => i.articleNo === xs.articleNo && i.row !== xs.row);
+  checks.push(['applyScans: neue Inventur, Mengen + Chargen', ar === 'reset' && cells.Bestand[`F${m.row}`] === 2 && cells.Bestand[`I${m.row}`] === 'A1, A1' && cells.Bestand[`F${xs.row}`] === 1 && cells.Bestand[`I${xs.row}`] === 'B7']);
+  checks.push(['applyScans: übrige Größen 0', [...art1, ...art2].every((i) => cells.Bestand[`F${i.row}`] === 0)]);
+  checks.push(['applyScans: nie in Gruppenzeilen', !calls.slice(callsBefore).some((c) => c.startsWith('PATCH') && /range\(address='[A-Z]+(9|15|16|20|21)[:']/.test(c))]);
+  const ar2 = await applyScans(f, st.source, st.items, [{ row: m.row!, qty: 1, batches: ['C3'] }], '2026-11-20', 'Anna');
+  checks.push(['applyScans: zweite Sendung zählt dazu', ar2 === 'ok' && cells.Bestand[`F${m.row}`] === 3 && cells.Bestand[`I${m.row}`] === 'A1, A1, C3' && cells.Bestand.G4 === 'Phillip, Anna']);
   let fail = 0;
   for (const [n, ok] of checks) {
     if (!ok) fail++;
