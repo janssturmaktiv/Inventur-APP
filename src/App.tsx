@@ -207,7 +207,17 @@ export default function App() {
 
   // Pro Datei und Inventurtag nur einmal prüfen, ob eine neue Inventur beginnt
   const inventoryChecked = useRef('');
-  async function pushScan(scan: Scan, target: TargetItem) {
+  // Alle Schreibvorgänge dieses Handys nacheinander ausführen, damit sich schnelle Scans nicht überschreiben
+  const spQueue = useRef<Promise<unknown>>(Promise.resolve());
+  function enqueue<T>(job: () => Promise<T>): Promise<T> {
+    const p = spQueue.current.then(job, job);
+    spQueue.current = p.catch(() => {});
+    return p;
+  }
+  function pushScan(scan: Scan, target: TargetItem) {
+    return enqueue(() => doPushScan(scan, target));
+  }
+  async function doPushScan(scan: Scan, target: TargetItem) {
     if (!spFile || !source || !target.row) return;
     try {
       const date = inventoryDate([...scans, scan]);
@@ -238,6 +248,28 @@ export default function App() {
     } catch (e) {
       flash('Nicht gesendet, wird später erneut versucht');
       setSpError(`Eintragen fehlgeschlagen: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  /** Liste in SharePoint leeren und mit allen Scans dieses Handys neu befüllen. */
+  async function refillShared() {
+    setExportMenu(false);
+    if (!spFile || !source) return;
+    const list = [...scans].reverse().map((sc) => ({ sc, t: findTarget(targets, sc, mappings) })).filter((x) => x.t?.row);
+    if (!confirm(`Liste neu befüllen?\n\nIn der SharePoint-Liste werden Ist und Chargen-Nr. geleert und mit den ${list.length} Scans dieses Handys neu eingetragen. Nur nutzen, wenn du allein inventurst oder die Liste falsch ist.`)) return;
+    setBusy('Liste wird neu befüllt …');
+    try {
+      await enqueue(async () => {
+        await resetInventory(spFile, source, targets);
+        inventoryChecked.current = '';
+      });
+      for (const { sc, t } of list) await pushScan(sc, t!);
+      await refreshShared(spFile, true);
+      flash('Liste neu befüllt');
+    } catch (e) {
+      alert(`Fehlgeschlagen: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setBusy('');
     }
   }
 
@@ -381,7 +413,7 @@ export default function App() {
     if (inShared) {
       try {
         const stillUsed = scans.some((x) => x.id !== id && x.sync === 'ok' && x.syncedRow === sc.syncedRow && x.batch === sc.batch);
-        const res = await removeFromRow(spFile!, source!, sc.syncedRow!, sc.quantity, sc.batch, stillUsed);
+        const res = await enqueue(() => removeFromRow(spFile!, source!, sc.syncedRow!, sc.quantity, sc.batch, stillUsed));
         setTargets((p) => p.map((t) => (t.row === sc.syncedRow ? { ...t, currentIst: res.ist, currentBatch: res.batch } : t)));
       } catch (e) {
         alert(`Austragen in SharePoint fehlgeschlagen: ${e instanceof Error ? e.message : e}`);
@@ -398,7 +430,7 @@ export default function App() {
     if (!confirm(`Inventur abschließen?\n\n${open} Artikel ohne Ist-Wert werden auf 0 gesetzt (→ nachbestellen). Inventurdatum und „Geprüft von: ${settings.userName || '–'}“ werden eingetragen.`)) return;
     setBusy('Wird in SharePoint eingetragen …');
     try {
-      await finishInventory(spFile, source, targets, settings.userName);
+      await enqueue(() => finishInventory(spFile, source, targets, settings.userName));
       await refreshShared(spFile, true);
       flash('Inventur abgeschlossen');
     } catch (e) {
@@ -413,7 +445,7 @@ export default function App() {
     if (!confirm('Neue Inventur starten?\n\nIst und Chargen-Nr. werden in der gemeinsamen SharePoint-Liste für ALLE Artikel geleert. Die Scans auf diesem Gerät werden ebenfalls gelöscht.')) return;
     setBusy('Liste wird zurückgesetzt …');
     try {
-      await resetInventory(spFile, source, targets);
+      await enqueue(() => resetInventory(spFile, source, targets));
       setScans([]);
       await refreshShared(spFile, true);
       setShowSettings(false);
@@ -703,10 +735,16 @@ export default function App() {
               </>
             )}
             {shared && (
-              <button className="menu-item" onClick={finishShared}>
-                <b>Inventur abschließen</b>
-                <span>In der SharePoint-Liste: nicht gefundene Artikel auf 0 (→ nachbestellen), Datum und Prüfer eintragen</span>
-              </button>
+              <>
+                <button className="menu-item" onClick={finishShared}>
+                  <b>Inventur abschließen</b>
+                  <span>In der SharePoint-Liste: nicht gefundene Artikel auf 0 (→ nachbestellen), Datum und Prüfer eintragen</span>
+                </button>
+                <button className="menu-item" onClick={refillShared}>
+                  <b>Liste neu befüllen</b>
+                  <span>Ist und Chargen leeren und mit allen {scans.length} Scans dieses Handys neu eintragen</span>
+                </button>
+              </>
             )}
             {!shared && canWriteOriginal && (
               <button className="menu-item" onClick={() => runExport('original')}>

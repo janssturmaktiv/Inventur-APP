@@ -20,7 +20,41 @@ export async function loadShared(f: FileRef): Promise<SharedState> {
   const { items, source } = parseTargetWorkbook(b64, f.name);
   if (!source.istCol) throw new Error('In der Liste wurde keine Spalte „Ist“ gefunden.');
   const mappings = await loadMappings(f).catch(() => ({}));
+  // Die heruntergeladene Datei kann ein paar Minuten hinter Excel Online zurückliegen.
+  // Ist und Chargen deshalb immer live über die Excel-Schnittstelle lesen.
+  await readLiveValues(f, source, items);
   return { items, source, mappings };
+}
+
+/** Zusammenhängende Blöcke von Artikelzeilen (ohne Gruppen-Überschriften dazwischen). */
+function rowBlocks(items: TargetItem[]): [number, number][] {
+  const rows = [...new Set(items.map((i) => i.row!).filter(Boolean))].sort((a, b) => a - b);
+  const out: [number, number][] = [];
+  for (let i = 0; i < rows.length; ) {
+    let j = i;
+    while (j + 1 < rows.length && rows[j + 1] === rows[j] + 1) j++;
+    out.push([rows[i], rows[j]]);
+    i = j + 1;
+  }
+  return out;
+}
+
+async function readLiveValues(f: FileRef, source: TargetSource, items: TargetItem[]) {
+  if (!source.istCol) return;
+  const byRow = new Map(items.filter((i) => i.row).map((i) => [i.row!, i]));
+  const blocks = rowBlocks(items);
+  if (!blocks.length) return;
+  const first = blocks[0][0];
+  const last = blocks[blocks.length - 1][1];
+  const ist = await readRange(f, source.sheetName, `${source.istCol}${first}:${source.istCol}${last}`);
+  const bat = source.batchCol ? await readRange(f, source.sheetName, `${source.batchCol}${first}:${source.batchCol}${last}`) : [];
+  for (let r = first; r <= last; r++) {
+    const it = byRow.get(r);
+    if (!it) continue;
+    const v = ist[r - first]?.[0];
+    it.currentIst = v === '' || v === null || v === undefined ? null : Number(v);
+    it.currentBatch = String(bat[r - first]?.[0] ?? '');
+  }
 }
 
 async function loadMappings(f: FileRef): Promise<Mappings> {
@@ -166,7 +200,17 @@ export async function ensureInventory(f: FileRef, source: TargetSource, items: T
 /** Alle Größen/Seiten eines gescannten Artikels ohne Ist-Wert auf 0 setzen (→ „nachbestellen“). */
 export async function zeroFillArticle(f: FileRef, source: TargetSource, items: TargetItem[], articleNo: string) {
   const same = items.filter((i) => normId(i.articleNo) === normId(articleNo));
-  return writeColumn(f, source, source.istCol!, same, (cur) => (isEmpty(cur) ? 0 : cur));
+  const changed: { row: number; value: unknown }[] = [];
+  for (const [a, b] of rowBlocks(same)) {
+    const cur = await readRange(f, source.sheetName, `${source.istCol}${a}:${source.istCol}${b}`);
+    // nur die leeren Zellen einzeln setzen: so wird nie ein Wert überschrieben, den gerade jemand anderes einträgt
+    for (let r = a; r <= b; r++) {
+      if (!isEmpty(cur[r - a]?.[0])) continue;
+      await writeRange(f, source.sheetName, `${source.istCol}${r}`, [[0]]);
+      changed.push({ row: r, value: 0 });
+    }
+  }
+  return changed;
 }
 
 /** Inventur abschließen: leere Ist-Felder auf 0 (→ nachbestellen), Datum und Prüfer eintragen. */
