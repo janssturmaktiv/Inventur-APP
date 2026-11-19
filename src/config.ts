@@ -8,3 +8,5 @@ export const MS_CONFIG = {
 };
 // Name des versteckten Blatts, in dem die App gelernte Zuordnungen (UDI-DI -> Zeile) für alle speichert
 export const MAPPING_SHEET = 'App-Zuordnungen';
+// Lagerinventur: SharePoint-Ordner mit Artikelstamm und Inventurdateien (Link „Link kopieren“ des Ordners)
+export const LAGER_FOLDER_URL = '';

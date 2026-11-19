@@ -62,7 +62,7 @@ export class GraphError extends Error {
   }
 }
 
-async function graph<T = unknown>(path: string, init: RequestInit & { raw?: boolean } = {}): Promise<T> {
+export async function graph<T = unknown>(path: string, init: RequestInit & { raw?: boolean } = {}): Promise<T> {
   const t = await token();
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(path.startsWith('http') ? path : GRAPH + path, {
